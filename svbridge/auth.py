@@ -90,26 +90,31 @@ class ServiceAccountAuth(AuthProvider):
             headers["x-goog-user-project"] = self.config.project_id
         return headers
 
-    @property
-    def _base_url(self) -> str:
-        loc = self.config.location
+    @staticmethod
+    def _base_url_for(loc: str) -> str:
         if loc == "global":
             return "https://aiplatform.googleapis.com"
         return f"https://{loc}-aiplatform.googleapis.com"
 
-    def build_openai_url(self, path: str) -> str:
-        loc = self.config.location
+    @property
+    def _base_url(self) -> str:
+        return self._base_url_for(self.config.location)
+
+    def build_openai_url(self, path: str, model: str = "") -> str:
+        loc = self.config.resolve_location(model) if model else self.config.location
         pid = self.config.project_id
+        base = self._base_url_for(loc)
         return (
-            f"{self._base_url}/v1"
+            f"{base}/v1"
             f"/projects/{pid}/locations/{loc}/endpoints/openapi{path}"
         )
 
     def build_gemini_url(self, model: str, method: str) -> str:
-        loc = self.config.location
+        loc = self.config.resolve_location(model)
         pid = self.config.project_id
+        base = self._base_url_for(loc)
         return (
-            f"{self._base_url}/v1"
+            f"{base}/v1"
             f"/projects/{pid}/locations/{loc}"
             f"/publishers/google/models/{model}:{method}"
         )

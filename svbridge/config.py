@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 from dataclasses import dataclass, field
+from fnmatch import fnmatch
 from typing import Literal
 
 CONFIG_FILE = "svbridge-config.json"
@@ -14,6 +15,7 @@ class AppConfig:
     # Service account mode
     project_id: str | None = None
     location: str = "us-central1"
+    location_overrides: list[tuple[str, str]] = field(default_factory=list)
     # API key mode
     api_key: str | None = None
     # Shared
@@ -33,6 +35,13 @@ class AppConfig:
     access_token: str | None = None
     token_expiry: str | None = None
 
+    def resolve_location(self, model: str) -> str:
+        bare = model.split("/")[-1] if "/" in model else model
+        for pattern, loc in self.location_overrides:
+            if fnmatch(bare, pattern):
+                return loc
+        return self.location
+
 
 def load_config() -> AppConfig:
     api_key = os.environ.get("VERTEX_API_KEY")
@@ -45,9 +54,19 @@ def load_config() -> AppConfig:
     extra_models = [m.strip() for m in extra_env.split(",") if m.strip()]
     extra_models = [m if "/" in m else f"google/{m}" for m in extra_models]
 
+    overrides_env = os.environ.get("VERTEX_LOCATION_OVERRIDES", "")
+    location_overrides = []
+    for entry in overrides_env.split(","):
+        entry = entry.strip()
+        if "=" in entry:
+            pattern, loc = entry.split("=", 1)
+            if pattern.strip() and loc.strip():
+                location_overrides.append((pattern.strip(), loc.strip()))
+
     cfg = AppConfig(
         auth_mode=auth_mode,
         location=os.environ.get("VERTEX_LOCATION", "us-central1"),
+        location_overrides=location_overrides,
         api_key=api_key,
         proxy_key=os.environ.get("PROXY_KEY", ""),
         port=int(os.environ.get("PORT", "8086")),

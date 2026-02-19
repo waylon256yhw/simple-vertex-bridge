@@ -83,13 +83,13 @@ async def chat_completions(request: Request):
     logger.info(f"[Proxy] {request.method} /v1/chat/completions")
 
     if app_config.auth_mode == "service_account":
-        url = auth.build_openai_url("/chat/completions")
+        raw = await request.json()
+        raw["model"] = _normalize_model(raw.get("model", ""))
+        url = auth.build_openai_url("/chat/completions", model=raw["model"])
         qs = _forward_query(request)
         if qs:
             url += "?" + qs
         headers = _proxy_headers(request, await auth.get_headers())
-        raw = await request.json()
-        raw["model"] = _normalize_model(raw.get("model", ""))
         body = json.dumps(raw).encode()
         return await stream_proxy(http_client, request.method, url, headers, body)
 

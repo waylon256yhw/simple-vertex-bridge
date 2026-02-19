@@ -4,25 +4,26 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simple-vertex-bridge"
-version = "0.3.1"
-description = "A simple Vertex AI proxy that automatically refresh tokens for you."
+version = "0.4.0"
+description = "A lightweight Vertex AI reverse proxy with dual auth mode (Service Account + API Key)."
 readme = "README.md"
-requires-python = ">=3.13"
+requires-python = ">=3.11"
 authors = [{ name = "zetaloop", email = "zetaloop@outlook.com" }]
 license = "Unlicense"
 license-files = ["LICENSE"]
 dependencies = [
     "google-auth",
+    "requests",
     "fastapi",
     "uvicorn",
-    "requests",
-    "httpx",
-    "h2",
+    "httpx[http2]",
     "apscheduler",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Operating System :: OS Independent",
     "Topic :: Internet :: Proxy Servers",
@@ -30,4 +31,4 @@ classifiers = [
 urls = { repository = "https://github.com/zetaloop/simple-vertex-bridge" }
 
 [project.scripts]
-simple-vertex-bridge = "svbridge:main"
+simple-vertex-bridge = "svbridge.main:main"

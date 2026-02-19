@@ -1,0 +1,11 @@
+services:
+  svbridge:
+    build: .
+    ports:
+      - "${PORT:-8086}:8086"
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+      - ./genuine-habitat-487906-j0-a45f344796fe.json:/app/sa.json:ro
+    restart: unless-stopped

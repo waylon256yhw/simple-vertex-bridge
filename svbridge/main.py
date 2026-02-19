@@ -50,7 +50,11 @@ async def startup():
     app_config = load_config()
     logger.info(f"[Config] Auth mode: {app_config.auth_mode}")
 
-    http_client = httpx.AsyncClient(http2=True, timeout=None)
+    http_client = httpx.AsyncClient(
+        http2=True,
+        limits=httpx.Limits(max_connections=200, max_keepalive_connections=50),
+        timeout=httpx.Timeout(connect=10, read=600, write=60, pool=30),
+    )
 
     if app_config.auth_mode == "service_account":
         logger.info("[Google] Getting project ID...")

@@ -63,7 +63,7 @@ async def chat_completions(request: Request):
         url = auth.build_openai_url("/chat/completions")
         if request.url.query:
             url += f"?{request.url.query}"
-        headers = _proxy_headers(request, auth.get_headers())
+        headers = _proxy_headers(request, await auth.get_headers())
         body = await request.body()
         return await stream_proxy(http_client, request.method, url, headers, body)
 
@@ -91,7 +91,7 @@ async def chat_completions(request: Request):
 async def generate_content(model: str, request: Request):
     logger.info(f"[Proxy] POST /v1/models/{model}:generateContent")
     url = auth.build_gemini_url(model, "generateContent")
-    headers = _proxy_headers(request, auth.get_headers())
+    headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()
     resp = await http_client.post(url, headers=headers, content=body)
@@ -109,7 +109,7 @@ async def stream_generate_content(model: str, request: Request):
     query = request.url.query
     if query:
         url += f"&{query}" if "?" in url else f"?{query}"
-    headers = _proxy_headers(request, auth.get_headers())
+    headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()
     return await stream_proxy(http_client, "POST", url, headers, body)
@@ -125,7 +125,7 @@ async def models(request: Request):
     async def _fetch(publisher: str) -> list[dict]:
         url = auth.build_models_url(publisher)
         headers = {"Content-Type": "application/json"}
-        auth_headers = auth.get_headers()
+        auth_headers = await auth.get_headers()
         headers.update(auth_headers)
         if app_config.auth_mode == "service_account" and app_config.project_id:
             headers["x-goog-user-project"] = app_config.project_id

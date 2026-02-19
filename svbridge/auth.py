@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
@@ -17,7 +18,7 @@ BACKGROUND_INTERVAL = 5  # minutes
 
 class AuthProvider(ABC):
     @abstractmethod
-    def get_headers(self) -> dict[str, str]: ...
+    async def get_headers(self) -> dict[str, str]: ...
 
     @abstractmethod
     def build_openai_url(self, path: str) -> str: ...
@@ -78,9 +79,9 @@ class ServiceAccountAuth(AuthProvider):
             logger.error("[Token] Token refresh failed")
             return False
 
-    def get_headers(self) -> dict[str, str]:
+    async def get_headers(self) -> dict[str, str]:
         if not self._is_valid():
-            self.refresh_token(force=True)
+            await asyncio.to_thread(self.refresh_token, True)
         token = self.config.access_token
         if not token:
             raise RuntimeError("No valid token available")
@@ -140,7 +141,7 @@ class ApiKeyAuth(AuthProvider):
     def __init__(self, config: AppConfig):
         self.api_key = config.api_key or ""
 
-    def get_headers(self) -> dict[str, str]:
+    async def get_headers(self) -> dict[str, str]:
         return {}
 
     def _append_key(self, url: str) -> str:

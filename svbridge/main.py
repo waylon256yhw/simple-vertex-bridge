@@ -10,7 +10,7 @@ from fastapi import FastAPI
 
 from .auth import AuthProvider, create_auth, get_gcloud_project_id
 from .config import AppConfig, load_config
-from .routes import init as init_routes, router
+from .routes import init as init_routes, router, v1beta_router
 
 logger = logging.getLogger("svbridge")
 
@@ -28,6 +28,7 @@ async def lifespan(_app: FastAPI):
 
 app = FastAPI(lifespan=lifespan)
 app.include_router(router)
+app.include_router(v1beta_router)
 
 # Also mount without /v1 prefix for backward compat
 from fastapi import APIRouter

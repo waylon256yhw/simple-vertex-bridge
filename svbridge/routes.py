@@ -93,19 +93,24 @@ async def chat_completions(request: Request):
     )
 
 
-def _strip_publisher(model: str) -> str:
-    """Strip publisher prefix (e.g. 'google/gemini-2.0-flash' -> 'gemini-2.0-flash')."""
-    if "/" in model:
-        return model.split("/", 1)[1]
-    return model
+def _parse_model_path(model_path: str) -> str:
+    """Parse model path, strip publisher prefix if present."""
+    parts = model_path.split("/")
+    if len(parts) == 1:
+        return parts[0]
+    if len(parts) == 2:
+        return parts[1]
+    raise HTTPException(status_code=400, detail="Invalid model path")
 
 
 # --- Gemini native endpoints ---
 
+gemini_router = APIRouter(dependencies=[Depends(verify_token)])
 
-@router.api_route("/models/{model}:generateContent", methods=["POST"])
-async def generate_content(model: str, request: Request):
-    model = _strip_publisher(model)
+
+@gemini_router.api_route("/models/{model_path:path}:generateContent", methods=["POST"])
+async def generate_content(model_path: str, request: Request):
+    model = _parse_model_path(model_path)
     logger.info(f"[Proxy] POST models/{model}:generateContent")
     url = auth.build_gemini_url(model, "generateContent")
     headers = _proxy_headers(request, await auth.get_headers())
@@ -119,9 +124,9 @@ async def generate_content(model: str, request: Request):
     )
 
 
-@router.api_route("/models/{model}:streamGenerateContent", methods=["POST"])
-async def stream_generate_content(model: str, request: Request):
-    model = _strip_publisher(model)
+@gemini_router.api_route("/models/{model_path:path}:streamGenerateContent", methods=["POST"])
+async def stream_generate_content(model_path: str, request: Request):
+    model = _parse_model_path(model_path)
     logger.info(f"[Proxy] POST models/{model}:streamGenerateContent")
     url = auth.build_gemini_url(model, "streamGenerateContent")
     query = request.url.query
@@ -131,43 +136,6 @@ async def stream_generate_content(model: str, request: Request):
     headers["Content-Type"] = "application/json"
     body = await request.body()
     return await stream_proxy(http_client, "POST", url, headers, body)
-
-
-# --- /v1beta prefix for standard Gemini API compatibility ---
-# Also handle {publisher}/{model} paths (e.g. google/gemini-2.0-flash)
-
-v1beta_router = APIRouter(prefix="/v1beta", dependencies=[Depends(verify_token)])
-
-
-@v1beta_router.api_route("/models/{model}:generateContent", methods=["POST"])
-async def beta_generate_content(model: str, request: Request):
-    return await generate_content(model, request)
-
-
-@v1beta_router.api_route("/models/{model}:streamGenerateContent", methods=["POST"])
-async def beta_stream_generate_content(model: str, request: Request):
-    return await stream_generate_content(model, request)
-
-
-@v1beta_router.api_route("/models/{publisher}/{model}:generateContent", methods=["POST"])
-async def beta_pub_generate_content(publisher: str, model: str, request: Request):
-    return await generate_content(model, request)
-
-
-@v1beta_router.api_route("/models/{publisher}/{model}:streamGenerateContent", methods=["POST"])
-async def beta_pub_stream_generate_content(publisher: str, model: str, request: Request):
-    return await stream_generate_content(model, request)
-
-
-# Also add publisher routes to /v1
-@router.api_route("/models/{publisher}/{model}:generateContent", methods=["POST"])
-async def pub_generate_content(publisher: str, model: str, request: Request):
-    return await generate_content(model, request)
-
-
-@router.api_route("/models/{publisher}/{model}:streamGenerateContent", methods=["POST"])
-async def pub_stream_generate_content(publisher: str, model: str, request: Request):
-    return await stream_generate_content(model, request)
 
 
 # --- Model listing ---

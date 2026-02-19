@@ -43,6 +43,7 @@ def load_config() -> AppConfig:
 
     extra_env = os.environ.get("EXTRA_MODELS", "")
     extra_models = [m.strip() for m in extra_env.split(",") if m.strip()]
+    extra_models = [m if "/" in m else f"google/{m}" for m in extra_models]
 
     cfg = AppConfig(
         auth_mode=auth_mode,

@@ -43,6 +43,13 @@ async def verify_token(authorization: str | None = Header(None)) -> None:
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_token)])
 
 
+def _normalize_model(model: str) -> str:
+    """Auto-prefix 'google/' if model name has no publisher prefix."""
+    if "/" not in model:
+        return f"google/{model}"
+    return model
+
+
 def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, str]:
     headers = {
         k: v for k, v in request.headers.items()
@@ -64,7 +71,9 @@ async def chat_completions(request: Request):
         if request.url.query:
             url += f"?{request.url.query}"
         headers = _proxy_headers(request, await auth.get_headers())
-        body = await request.body()
+        raw = await request.json()
+        raw["model"] = _normalize_model(raw.get("model", ""))
+        body = json.dumps(raw).encode()
         return await stream_proxy(http_client, request.method, url, headers, body)
 
     # API key mode: convert OpenAI -> Gemini -> OpenAI

@@ -3,6 +3,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import secrets
+from urllib.parse import urlencode
 
 import httpx
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
@@ -31,19 +33,21 @@ def init(cfg: AppConfig, auth_provider: AuthProvider, client: httpx.AsyncClient)
 async def verify_token(request: Request, authorization: str | None = Header(None)) -> None:
     if not app_config.proxy_key:
         return
-    # Accept key from query parameter (?key=xxx) for Gemini API clients
-    key_param = request.query_params.get("key")
-    if key_param:
-        if key_param != app_config.proxy_key:
-            raise HTTPException(status_code=401, detail="Invalid key")
-        return
-    if not authorization:
-        raise HTTPException(status_code=401, detail="Missing Authorization header")
-    parts = authorization.split()
-    if len(parts) != 2 or parts[0].lower() != "bearer":
+    # Prefer Authorization header when present
+    if authorization:
+        parts = authorization.split()
+        if len(parts) == 2 and parts[0].lower() == "bearer":
+            if secrets.compare_digest(parts[1], app_config.proxy_key):
+                return
+            raise HTTPException(status_code=401, detail="Invalid token")
         raise HTTPException(status_code=401, detail="Invalid Authorization format")
-    if parts[1] != app_config.proxy_key:
-        raise HTTPException(status_code=401, detail="Invalid token")
+    # Fall back to ?key= query parameter for Gemini API clients
+    key_param = request.query_params.get("key")
+    if key_param is not None:
+        if secrets.compare_digest(key_param, app_config.proxy_key) if key_param else False:
+            return
+        raise HTTPException(status_code=401, detail="Invalid key")
+    raise HTTPException(status_code=401, detail="Missing Authorization header")
 
 
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_token)])
@@ -54,6 +58,12 @@ def _normalize_model(model: str) -> str:
     if "/" not in model:
         return f"google/{model}"
     return model
+
+
+def _forward_query(request: Request) -> str:
+    """Build URL-encoded query string from request, stripping the proxy auth key."""
+    params = [(k, v) for k, v in request.query_params.multi_items() if k != "key"]
+    return urlencode(params) if params else ""
 
 
 def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, str]:
@@ -74,9 +84,9 @@ async def chat_completions(request: Request):
 
     if app_config.auth_mode == "service_account":
         url = auth.build_openai_url("/chat/completions")
-        params = [(k, v) for k, v in request.query_params.multi_items() if k != "key"]
-        if params:
-            url += "?" + "&".join(f"{k}={v}" for k, v in params)
+        qs = _forward_query(request)
+        if qs:
+            url += "?" + qs
         headers = _proxy_headers(request, await auth.get_headers())
         raw = await request.json()
         raw["model"] = _normalize_model(raw.get("model", ""))
@@ -136,10 +146,8 @@ async def stream_generate_content(model_path: str, request: Request):
     model = _parse_model_path(model_path)
     logger.info(f"[Proxy] POST models/{model}:streamGenerateContent")
     url = auth.build_gemini_url(model, "streamGenerateContent")
-    # Forward query params but strip the proxy auth key
-    params = [(k, v) for k, v in request.query_params.multi_items() if k != "key"]
-    if params:
-        qs = "&".join(f"{k}={v}" for k, v in params)
+    qs = _forward_query(request)
+    if qs:
         url += f"&{qs}" if "?" in url else f"?{qs}"
     headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"

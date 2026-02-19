@@ -42,7 +42,7 @@ google/gemini-2.5-flash   ← 直接使用
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/app/sa.json
 SA_FILE=your-key.json        # 宿主机上的文件名，挂载到容器内
-VERTEX_LOCATION=us-central1  # 或 global（用于最新预览模型）
+VERTEX_LOCATION=us-central1  # 默认区域
 ```
 
 服务账号需要的 IAM 角色：
@@ -77,6 +77,17 @@ EXTRA_MODELS=gemini-3.1-pro-preview  # 固定追加这些模型（自动补 goog
 
 `EXTRA_MODELS` 添加 API 列表中可能没有的模型（如新上线的预览模型）。不含斜杠的模型名自动补 `google/` 前缀。
 
+### 按模型路由区域
+
+部分模型仅在特定区域可用（如预览模型需要 `global`）。用 `VERTEX_LOCATION_OVERRIDES` 为特定模型指定区域：
+
+```bash
+VERTEX_LOCATION=us-central1                      # 默认区域
+VERTEX_LOCATION_OVERRIDES=gemini-3.1-*=global     # 预览模型 → global
+```
+
+格式：`模式=区域`，逗号分隔。支持 `*` 和 `?` 通配符（[fnmatch](https://docs.python.org/3/library/fnmatch.html)）。按顺序匹配，首个命中生效，无匹配则回退到 `VERTEX_LOCATION`。
+
 ### 完整环境变量
 
 | 变量 | 默认值 | 说明 |
@@ -84,8 +95,9 @@ EXTRA_MODELS=gemini-3.1-pro-preview  # 固定追加这些模型（自动补 goog
 | `VERTEX_API_KEY` | — | API 密钥（触发 Express 模式） |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | 容器内 SA JSON 路径 |
 | `SA_FILE` | `sa.json` | 宿主机 SA JSON 文件名（Docker 挂载用） |
-| `VERTEX_LOCATION` | `us-central1` | 区域（`us-central1`、`global` 等） |
-| `PROXY_KEY` | *（任意）* | 代理认证 Bearer Token |
+| `VERTEX_LOCATION` | `us-central1` | 默认区域（`us-central1`、`global` 等） |
+| `VERTEX_LOCATION_OVERRIDES` | — | 按模型路由区域（`模式=区域,...`） |
+| `PROXY_KEY` | *（任意）* | 代理认证，支持 Bearer Token 或 `?key=` |
 | `PORT` | `8086` | 服务端口 |
 | `BIND` | `localhost` | 绑定地址 |
 | `PUBLISHERS` | `google,anthropic,meta` | 模型列表拉取的 publisher |
@@ -109,6 +121,9 @@ simple-vertex-bridge -p 8086 -b 0.0.0.0 -k your-secret
 | `GET /v1/models` | OpenAI | 列出可用模型 |
 | `POST /v1/models/{model}:generateContent` | Gemini | Gemini 原生（仅 SA 模式） |
 | `POST /v1/models/{model}:streamGenerateContent` | Gemini | Gemini 原生流式（仅 SA 模式） |
+| `POST /v1beta/models/{model}:*` | Gemini | 同上，v1beta 前缀 |
+
+Gemini 端点的模型路径支持 `google/model-name` 或裸 `model-name`。认证方式：`Authorization: Bearer <key>` 请求头或 `?key=<key>` 查询参数。
 
 ## 开发
 

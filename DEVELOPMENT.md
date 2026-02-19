@@ -7,7 +7,7 @@ This project is a fork of [zetaloop/simple-vertex-bridge](https://github.com/zet
 - Dual auth mode (Service Account + API Key Express)
 - Gemini native endpoints alongside OpenAI-compatible ones
 - OpenAI ↔ Gemini format conversion for API Key mode
-- Configurable region with `global` location support
+- Configurable region with `global` location support and per-model routing
 - Docker deployment
 - Lowered Python requirement from 3.13 to 3.11
 
@@ -49,6 +49,7 @@ VERTEX_API_KEY set?
            - /v1/chat/completions: native passthrough (zero conversion)
            - Regional endpoint: {loc}-aiplatform.googleapis.com
            - global location: aiplatform.googleapis.com (no region prefix)
+           - Per-model routing: VERTEX_LOCATION_OVERRIDES (fnmatch patterns)
 ```
 
 ### Request Flow
@@ -156,3 +157,19 @@ Only used in API Key mode for `/v1/chat/completions`.
 - Chat completion requests: bare model names (e.g. `gemini-2.5-flash`) are normalized to `google/gemini-2.5-flash`
 - `openai_to_gemini()` strips `google/` prefix before building Gemini API URLs
 - Gemini native endpoints use bare model names in the URL path (no prefix)
+
+## Per-Model Location Routing
+
+`VERTEX_LOCATION_OVERRIDES` maps model name patterns to GCP regions using `fnmatch` glob matching:
+
+```
+VERTEX_LOCATION=us-central1
+VERTEX_LOCATION_OVERRIDES=gemini-3.1-*=global
+```
+
+Resolution logic in `AppConfig.resolve_location(model)`:
+1. Strip publisher prefix (`google/gemini-2.5-pro` → `gemini-2.5-pro`)
+2. Evaluate overrides in order, first `fnmatch` match wins
+3. Fall back to `VERTEX_LOCATION`
+
+Applied in `build_gemini_url()` and `build_openai_url()` — routes don't need to know about regions.

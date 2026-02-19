@@ -42,7 +42,7 @@ Edit `.env` and restart (`docker compose up -d`).
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/app/sa.json
 SA_FILE=your-key.json        # filename on host, mounted into container
-VERTEX_LOCATION=us-central1  # or global for latest preview models
+VERTEX_LOCATION=us-central1  # default region for all models
 ```
 
 Required IAM roles for the service account:
@@ -77,6 +77,17 @@ EXTRA_MODELS=gemini-3.1-pro-preview  # always show these (auto-prefixed with goo
 
 `EXTRA_MODELS` adds models that may not appear in the API listing (e.g. new preview models). Bare names are auto-prefixed with `google/`.
 
+### Per-Model Region Routing
+
+Some models are only available in certain regions (e.g. preview models require `global`). Use `VERTEX_LOCATION_OVERRIDES` to route specific models to different regions:
+
+```bash
+VERTEX_LOCATION=us-central1                      # default region
+VERTEX_LOCATION_OVERRIDES=gemini-3.1-*=global     # preview models → global
+```
+
+Format: `pattern=region` pairs, comma-separated. Supports `*` and `?` wildcards ([fnmatch](https://docs.python.org/3/library/fnmatch.html)). First match wins, unmatched models use `VERTEX_LOCATION`.
+
 ### All Environment Variables
 
 | Variable | Default | Description |
@@ -84,8 +95,9 @@ EXTRA_MODELS=gemini-3.1-pro-preview  # always show these (auto-prefixed with goo
 | `VERTEX_API_KEY` | — | API key (triggers Express mode) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | SA JSON path inside container |
 | `SA_FILE` | `sa.json` | SA JSON filename on host (for Docker mount) |
-| `VERTEX_LOCATION` | `us-central1` | Region (`us-central1`, `global`, etc.) |
-| `PROXY_KEY` | *(any)* | Bearer token for proxy auth |
+| `VERTEX_LOCATION` | `us-central1` | Default region (`us-central1`, `global`, etc.) |
+| `VERTEX_LOCATION_OVERRIDES` | — | Per-model region routing (`pattern=region,...`) |
+| `PROXY_KEY` | *(any)* | Bearer token or `?key=` for proxy auth |
 | `PORT` | `8086` | Server port |
 | `BIND` | `localhost` | Bind address |
 | `PUBLISHERS` | `google,anthropic,meta` | Publishers to fetch models from |
@@ -109,6 +121,9 @@ simple-vertex-bridge -p 8086 -b 0.0.0.0 -k your-secret
 | `GET /v1/models` | OpenAI | List available models |
 | `POST /v1/models/{model}:generateContent` | Gemini | Native Gemini (SA mode only) |
 | `POST /v1/models/{model}:streamGenerateContent` | Gemini | Native Gemini streaming (SA mode only) |
+| `POST /v1beta/models/{model}:*` | Gemini | Same as above, v1beta prefix |
+
+Gemini endpoints accept `google/model-name` or bare `model-name` in the path. Auth via `Authorization: Bearer <key>` header or `?key=<key>` query parameter.
 
 ## Development
 

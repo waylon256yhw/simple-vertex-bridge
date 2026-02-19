@@ -28,8 +28,14 @@ def init(cfg: AppConfig, auth_provider: AuthProvider, client: httpx.AsyncClient)
     http_client = client
 
 
-async def verify_token(authorization: str | None = Header(None)) -> None:
+async def verify_token(request: Request, authorization: str | None = Header(None)) -> None:
     if not app_config.proxy_key:
+        return
+    # Accept key from query parameter (?key=xxx) for Gemini API clients
+    key_param = request.query_params.get("key")
+    if key_param:
+        if key_param != app_config.proxy_key:
+            raise HTTPException(status_code=401, detail="Invalid key")
         return
     if not authorization:
         raise HTTPException(status_code=401, detail="Missing Authorization header")
@@ -68,8 +74,9 @@ async def chat_completions(request: Request):
 
     if app_config.auth_mode == "service_account":
         url = auth.build_openai_url("/chat/completions")
-        if request.url.query:
-            url += f"?{request.url.query}"
+        params = [(k, v) for k, v in request.query_params.multi_items() if k != "key"]
+        if params:
+            url += "?" + "&".join(f"{k}={v}" for k, v in params)
         headers = _proxy_headers(request, await auth.get_headers())
         raw = await request.json()
         raw["model"] = _normalize_model(raw.get("model", ""))
@@ -129,9 +136,11 @@ async def stream_generate_content(model_path: str, request: Request):
     model = _parse_model_path(model_path)
     logger.info(f"[Proxy] POST models/{model}:streamGenerateContent")
     url = auth.build_gemini_url(model, "streamGenerateContent")
-    query = request.url.query
-    if query:
-        url += f"&{query}" if "?" in url else f"?{query}"
+    # Forward query params but strip the proxy auth key
+    params = [(k, v) for k, v in request.query_params.multi_items() if k != "key"]
+    if params:
+        qs = "&".join(f"{k}={v}" for k, v in params)
+        url += f"&{qs}" if "?" in url else f"?{qs}"
     headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()

@@ -190,6 +190,22 @@ async def models(request: Request):
                             "object": "model",
                             "owned_by": "google",
                         })
+                    # Handle pagination
+                    while data.get("nextPageToken"):
+                        sep = "&" if "?" in url else "?"
+                        page_url = f"{url}{sep}pageToken={data['nextPageToken']}"
+                        resp = await http_client.get(page_url, headers=headers)
+                        if resp.status_code != 200:
+                            break
+                        data = resp.json()
+                        for m in data.get("models", []):
+                            name = m.get("name", "")
+                            model_id = name.removeprefix("models/")
+                            result.append({
+                                "id": f"google/{model_id}",
+                                "object": "model",
+                                "owned_by": "google",
+                            })
                     return result
 
                 # Vertex format: {"publisherModels": [...]}

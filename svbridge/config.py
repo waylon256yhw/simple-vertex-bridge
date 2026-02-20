@@ -46,8 +46,8 @@ class AppConfig:
 
 
 def load_config() -> AppConfig:
-    api_key = os.environ.get("VERTEX_API_KEY")
-    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = os.environ.get("VERTEX_API_KEY") or None
+    gemini_api_key = os.environ.get("GEMINI_API_KEY") or None
     if gemini_api_key:
         auth_mode: Literal["service_account", "api_key", "aistudio"] = "aistudio"
     elif api_key:

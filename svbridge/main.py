@@ -71,6 +71,8 @@ async def startup():
 
     if app_config.auth_mode == "api_key":
         logger.info("[Mode] API Key (Express) | Global endpoint")
+    elif app_config.auth_mode == "aistudio":
+        logger.info("[Mode] AI Studio | generativelanguage.googleapis.com")
     else:
         logger.info(
             f"[Mode] Service Account | "

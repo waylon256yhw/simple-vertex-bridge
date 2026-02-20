@@ -11,13 +11,15 @@ CONFIG_FILE = "svbridge-config.json"
 
 @dataclass
 class AppConfig:
-    auth_mode: Literal["service_account", "api_key"] = "service_account"
+    auth_mode: Literal["service_account", "api_key", "aistudio"] = "service_account"
     # Service account mode
     project_id: str | None = None
     location: str = "us-central1"
     location_overrides: list[tuple[str, str]] = field(default_factory=list)
-    # API key mode
+    # API key mode (Vertex)
     api_key: str | None = None
+    # AI Studio mode
+    gemini_api_key: str | None = None
     # Shared
     proxy_key: str = ""
     port: int = 8086
@@ -45,7 +47,13 @@ class AppConfig:
 
 def load_config() -> AppConfig:
     api_key = os.environ.get("VERTEX_API_KEY")
-    auth_mode: Literal["service_account", "api_key"] = "api_key" if api_key else "service_account"
+    gemini_api_key = os.environ.get("GEMINI_API_KEY")
+    if gemini_api_key:
+        auth_mode: Literal["service_account", "api_key", "aistudio"] = "aistudio"
+    elif api_key:
+        auth_mode = "api_key"
+    else:
+        auth_mode = "service_account"
 
     publishers_env = os.environ.get("PUBLISHERS", "")
     publishers = [p.strip() for p in publishers_env.split(",") if p.strip()] or ["google", "anthropic", "meta"]
@@ -68,6 +76,7 @@ def load_config() -> AppConfig:
         location=os.environ.get("VERTEX_LOCATION", "us-central1"),
         location_overrides=location_overrides,
         api_key=api_key,
+        gemini_api_key=gemini_api_key,
         proxy_key=os.environ.get("PROXY_KEY", ""),
         port=int(os.environ.get("PORT", "8086")),
         bind=os.environ.get("BIND", "localhost"),

@@ -93,7 +93,7 @@ async def chat_completions(request: Request):
         body = json.dumps(raw).encode()
         return await stream_proxy(http_client, request.method, url, headers, body)
 
-    # API key mode: convert OpenAI -> Gemini -> OpenAI
+    # API key / AI Studio mode: convert OpenAI -> Gemini -> OpenAI
     body = await request.json()
     model, gemini_body, is_stream = openai_to_gemini(body)
 
@@ -103,6 +103,7 @@ async def chat_completions(request: Request):
         url += "&alt=sse" if "?" in url else "?alt=sse"
 
     headers = {"Content-Type": "application/json"}
+    headers.update(await auth.get_headers())
     payload = json.dumps(gemini_body).encode()
 
     return await proxy_gemini_as_openai(
@@ -178,6 +179,20 @@ async def models(request: Request):
                     return []
                 data = resp.json()
                 result = []
+
+                # AI Studio format: {"models": [{"name": "models/gemini-..."}]}
+                if "models" in data:
+                    for m in data["models"]:
+                        name = m.get("name", "")
+                        model_id = name.removeprefix("models/")
+                        result.append({
+                            "id": f"google/{model_id}",
+                            "object": "model",
+                            "owned_by": "google",
+                        })
+                    return result
+
+                # Vertex format: {"publisherModels": [...]}
                 for m in data.get("publisherModels", []):
                     name = m.get("name", "")
                     parts = name.split("/")
@@ -197,7 +212,8 @@ async def models(request: Request):
                 logger.warning(f"[Models] {publisher} failed: {e}")
                 return []
 
-    tasks = [_fetch(pub) for pub in app_config.publishers]
+    pubs = ["google"] if app_config.auth_mode == "aistudio" else app_config.publishers
+    tasks = [_fetch(pub) for pub in pubs]
     results = await asyncio.gather(*tasks)
 
     all_models: list[dict] = []

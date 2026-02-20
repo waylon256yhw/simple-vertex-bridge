@@ -172,6 +172,28 @@ class ApiKeyAuth(AuthProvider):
         )
 
 
+class AIStudioAuth(AuthProvider):
+    BASE = "https://generativelanguage.googleapis.com/v1beta"
+
+    def __init__(self, config: AppConfig):
+        self.api_key = config.gemini_api_key or ""
+
+    async def get_headers(self) -> dict[str, str]:
+        return {"x-goog-api-key": self.api_key}
+
+    def build_openai_url(self, path: str) -> str:
+        raise NotImplementedError(
+            "AI Studio has no OpenAI-compatible endpoint; "
+            "use body conversion via build_gemini_url instead"
+        )
+
+    def build_gemini_url(self, model: str, method: str) -> str:
+        return f"{self.BASE}/models/{model}:{method}"
+
+    def build_models_url(self, publisher: str) -> str:
+        return f"{self.BASE}/models"
+
+
 def get_gcloud_project_id() -> str:
     from google.auth import default
 
@@ -181,6 +203,8 @@ def get_gcloud_project_id() -> str:
 
 
 def create_auth(config: AppConfig) -> AuthProvider:
+    if config.auth_mode == "aistudio":
+        return AIStudioAuth(config)
     if config.auth_mode == "api_key":
         return ApiKeyAuth(config)
     return ServiceAccountAuth(config)

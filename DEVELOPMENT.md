@@ -35,21 +35,27 @@ Client (Open WebUI, SillyTavern, etc.)
 Vertex AI API
 ```
 
-### Auth Mode Decision
+## Auth Mode Decision
 
 ```
-VERTEX_API_KEY set?
-  ├─ Yes → ApiKeyAuth (Express mode)
+GEMINI_API_KEY set?
+  ├─ Yes → AIStudioAuth
   │        - No token management
   │        - /v1/chat/completions: OpenAI → Gemini body conversion
-  │        - Global endpoint: aiplatform.googleapis.com
+  │        - Endpoint: generativelanguage.googleapis.com
   │
-  └─ No  → ServiceAccountAuth
-           - Token auto-refresh (APScheduler, every 5 min)
-           - /v1/chat/completions: native passthrough (zero conversion)
-           - Regional endpoint: {loc}-aiplatform.googleapis.com
-           - global location: aiplatform.googleapis.com (no region prefix)
-           - Per-model routing: VERTEX_LOCATION_OVERRIDES (fnmatch patterns)
+  └─ No  → VERTEX_API_KEY set?
+           ├─ Yes → ApiKeyAuth (Express mode)
+           │        - No token management
+           │        - /v1/chat/completions: OpenAI → Gemini body conversion
+           │        - Global endpoint: aiplatform.googleapis.com
+           │
+           └─ No  → ServiceAccountAuth
+                    - Token auto-refresh (APScheduler, every 5 min)
+                    - /v1/chat/completions: native passthrough (zero conversion)
+                    - Regional endpoint: {loc}-aiplatform.googleapis.com
+                    - global location: aiplatform.googleapis.com (no region prefix)
+                    - Per-model routing: VERTEX_LOCATION_OVERRIDES (fnmatch patterns)
 ```
 
 ### Request Flow
@@ -153,10 +159,11 @@ Only used in API Key mode for `/v1/chat/completions`.
 
 ## Model Name Handling
 
-- `EXTRA_MODELS` values without `/` are auto-prefixed with `google/` at config load time
-- Chat completion requests: bare model names (e.g. `gemini-2.5-flash`) are normalized to `google/gemini-2.5-flash`
+- `/v1/models` returns bare model names for Google models (e.g. `gemini-2.5-flash`), non-Google publishers keep their prefix (e.g. `anthropic/claude-3`)
+- `EXTRA_MODELS` values are returned as-is (bare names default to `owned_by: "google"`)
+- Chat completion requests: bare model names are normalized to `google/gemini-2.5-flash` internally for SA mode
 - `openai_to_gemini()` strips `google/` prefix before building Gemini API URLs
-- Gemini native endpoints use bare model names in the URL path (no prefix)
+- Gemini native endpoints accept both `google/model-name` and bare `model-name` in the URL path
 
 ## Per-Model Location Routing
 

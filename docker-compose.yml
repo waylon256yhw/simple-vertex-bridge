@@ -9,3 +9,8 @@ services:
       - ./data:/app/data
       - ./${SA_FILE:-sa.json}:/app/sa.json:ro
     restart: unless-stopped
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

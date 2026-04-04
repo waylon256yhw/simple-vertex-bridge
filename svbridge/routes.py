@@ -41,6 +41,12 @@ async def verify_token(request: Request, authorization: str | None = Header(None
                 return
             raise HTTPException(status_code=401, detail="Invalid token")
         raise HTTPException(status_code=401, detail="Invalid Authorization format")
+    # Check x-goog-api-key header (used by native Gemini SDK clients)
+    goog_key = request.headers.get("x-goog-api-key")
+    if goog_key:
+        if secrets.compare_digest(goog_key, app_config.proxy_key):
+            return
+        raise HTTPException(status_code=401, detail="Invalid key")
     # Fall back to ?key= query parameter for Gemini API clients
     key_param = request.query_params.get("key")
     if key_param is not None:
@@ -69,7 +75,7 @@ def _forward_query(request: Request) -> str:
 def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, str]:
     headers = {
         k: v for k, v in request.headers.items()
-        if k.lower() not in ("host", "authorization", "content-length")
+        if k.lower() not in ("host", "authorization", "content-length", "x-goog-api-key")
     }
     headers.update(auth_headers)
     return headers
@@ -186,7 +192,7 @@ async def models(request: Request):
                         name = m.get("name", "")
                         model_id = name.removeprefix("models/")
                         result.append({
-                            "id": f"google/{model_id}",
+                            "id": model_id,
                             "object": "model",
                             "owned_by": "google",
                         })
@@ -202,7 +208,7 @@ async def models(request: Request):
                             name = m.get("name", "")
                             model_id = name.removeprefix("models/")
                             result.append({
-                                "id": f"google/{model_id}",
+                                "id": model_id,
                                 "object": "model",
                                 "owned_by": "google",
                             })
@@ -213,11 +219,12 @@ async def models(request: Request):
                     name = m.get("name", "")
                     parts = name.split("/")
                     if len(parts) == 4 and parts[0] == "publishers" and parts[2] == "models":
-                        model_id = f"{parts[1]}/{parts[3]}"
+                        pub, model_name = parts[1], parts[3]
+                        model_id = model_name if pub == "google" else f"{pub}/{model_name}"
                         result.append({
                             "id": model_id,
                             "object": "model",
-                            "owned_by": parts[1],
+                            "owned_by": pub,
                         })
                 return result
             except httpx.RequestError as e:
@@ -243,7 +250,7 @@ async def models(request: Request):
         ]
 
     for model_id in app_config.extra_models:
-        owner = model_id.split("/")[0] if "/" in model_id else "custom"
+        owner = model_id.split("/")[0] if "/" in model_id else "google"
         all_models.append({"id": model_id, "object": "model", "owned_by": owner})
 
     logger.info(f"[Models] Returning {len(all_models)} models")

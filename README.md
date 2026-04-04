@@ -27,8 +27,8 @@ Use these settings in Open WebUI, SillyTavern, or any OpenAI-compatible client:
 Model names work with or without the `google/` prefix:
 
 ```
-gemini-2.5-flash          ← auto-prefixed to google/gemini-2.5-flash
-google/gemini-2.5-flash   ← works as-is
+gemini-2.5-flash          ← used as-is
+google/gemini-2.5-flash   ← google/ prefix is stripped automatically
 ```
 
 ## Configuration
@@ -37,7 +37,29 @@ Edit `.env` and restart (`docker compose up -d`).
 
 ### Authentication (pick one)
 
-**Service Account** (recommended) — uses a JSON key file:
+Three auth modes are available. The mode is **auto-detected** from which env var you set — only set one:
+
+| Mode | You have… | Env var to set | Backend |
+|------|-----------|---------------|---------|
+| **AI Studio** | A Google AI Studio API key (`AIza...`) | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` |
+| **Service Account** | A GCP service account JSON key file | `GOOGLE_APPLICATION_CREDENTIALS` | `aiplatform.googleapis.com` (Vertex AI) |
+| **API Key** | A Google Cloud API key | `VERTEX_API_KEY` | `aiplatform.googleapis.com` (Vertex AI) |
+
+#### AI Studio mode — simplest to start
+
+Get an API key from [Google AI Studio](https://aistudio.google.com/apikey), then:
+
+```bash
+GEMINI_API_KEY=AIzaSy...
+```
+
+That's it. No GCP project or JSON file needed. Works for most Gemini models.
+
+> **Note:** AI Studio and Vertex AI are separate infrastructures. During high demand, AI Studio may return 503 errors on preview models even with a paid key. If you hit rate limits, consider switching to Service Account mode.
+
+#### Service Account mode — recommended for reliability
+
+Uses a GCP service account JSON key file, routed through Vertex AI:
 
 ```bash
 GOOGLE_APPLICATION_CREDENTIALS=/app/sa.json
@@ -52,16 +74,35 @@ Required IAM roles for the service account:
 | `roles/aiplatform.user` | Call models |
 | `roles/serviceusage.serviceUsageConsumer` | List models |
 
-**API Key** (simpler, fewer features) — uses a Google Cloud API key:
+#### API Key mode — Vertex AI without a JSON file
+
+Uses a Google Cloud API key (not an AI Studio key):
 
 ```bash
 VERTEX_API_KEY=your-api-key
 ```
 
+#### Switching between modes
+
+Comment out the key you don't want — the mode is auto-detected by priority:
+
+```bash
+# To use AI Studio:
+GEMINI_API_KEY=AIzaSy...
+#GOOGLE_APPLICATION_CREDENTIALS=/app/sa.json
+
+# To switch to Service Account, flip the comments:
+#GEMINI_API_KEY=AIzaSy...
+GOOGLE_APPLICATION_CREDENTIALS=/app/sa.json
+SA_FILE=your-key.json
+```
+
+Then restart: `docker compose up -d`.
+
 ### Server
 
 ```bash
-PROXY_KEY=your-secret     # clients must send as Bearer token (empty = allow any)
+PROXY_KEY=your-secret     # clients must send as Bearer token, x-goog-api-key header, or ?key= param (empty = allow any)
 PORT=8086
 BIND=0.0.0.0
 ```
@@ -69,13 +110,13 @@ BIND=0.0.0.0
 ### Model List
 
 ```bash
-PUBLISHERS=google                  # which publishers to fetch (default: google,anthropic,meta)
-EXTRA_MODELS=gemini-3.1-pro-preview  # always show these (auto-prefixed with google/)
+PUBLISHERS=google                    # which publishers to fetch (default: google,anthropic,meta)
+EXTRA_MODELS=gemini-3.1-pro-preview  # always show these in the model list
 ```
 
 `PUBLISHERS` controls which publishers are queried for the model list. Set `PUBLISHERS=google` to show only Google models.
 
-`EXTRA_MODELS` adds models that may not appear in the API listing (e.g. new preview models). Bare names are auto-prefixed with `google/`.
+`EXTRA_MODELS` adds models that may not appear in the API listing (e.g. new preview models).
 
 ### Per-Model Region Routing
 
@@ -92,12 +133,13 @@ Format: `pattern=region` pairs, comma-separated. Supports `*` and `?` wildcards 
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `VERTEX_API_KEY` | — | API key (triggers Express mode) |
+| `GEMINI_API_KEY` | — | AI Studio API key (triggers AI Studio mode) |
+| `VERTEX_API_KEY` | — | Google Cloud API key (triggers Express mode) |
 | `GOOGLE_APPLICATION_CREDENTIALS` | — | SA JSON path inside container |
 | `SA_FILE` | `sa.json` | SA JSON filename on host (for Docker mount) |
 | `VERTEX_LOCATION` | `us-central1` | Default region (`us-central1`, `global`, etc.) |
 | `VERTEX_LOCATION_OVERRIDES` | — | Per-model region routing (`pattern=region,...`) |
-| `PROXY_KEY` | *(any)* | Bearer token or `?key=` for proxy auth |
+| `PROXY_KEY` | *(any)* | Bearer token, `x-goog-api-key` header, or `?key=` for proxy auth |
 | `PORT` | `8086` | Server port |
 | `BIND` | `localhost` | Bind address |
 | `PUBLISHERS` | `google,anthropic,meta` | Publishers to fetch models from |
@@ -119,11 +161,11 @@ simple-vertex-bridge -p 8086 -b 0.0.0.0 -k your-secret
 |----------|--------|-------------|
 | `POST /v1/chat/completions` | OpenAI | Chat completion (streaming supported) |
 | `GET /v1/models` | OpenAI | List available models |
-| `POST /v1/models/{model}:generateContent` | Gemini | Native Gemini (SA mode only) |
-| `POST /v1/models/{model}:streamGenerateContent` | Gemini | Native Gemini streaming (SA mode only) |
+| `POST /v1/models/{model}:generateContent` | Gemini | Native Gemini (all auth modes) |
+| `POST /v1/models/{model}:streamGenerateContent` | Gemini | Native Gemini streaming (all auth modes) |
 | `POST /v1beta/models/{model}:*` | Gemini | Same as above, v1beta prefix |
 
-Gemini endpoints accept `google/model-name` or bare `model-name` in the path. Auth via `Authorization: Bearer <key>` header or `?key=<key>` query parameter.
+Gemini endpoints accept `google/model-name` or bare `model-name` in the path. Auth via `Authorization: Bearer <key>` header, `x-goog-api-key: <key>` header, or `?key=<key>` query parameter.
 
 ## Development
 

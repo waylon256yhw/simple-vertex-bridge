@@ -29,7 +29,7 @@ class AppConfig:
     publishers: list[str] = field(default_factory=lambda: ["google", "anthropic", "meta"])
     extra_models: list[str] = field(default_factory=list)
     model_names_filter: tuple[str, ...] = (
-        "google/gemini-",
+        "gemini-",
         "anthropic/claude-",
         "meta/llama",
     )
@@ -60,7 +60,7 @@ def load_config() -> AppConfig:
 
     extra_env = os.environ.get("EXTRA_MODELS", "")
     extra_models = [m.strip() for m in extra_env.split(",") if m.strip()]
-    extra_models = [m if "/" in m else f"google/{m}" for m in extra_models]
+    extra_models = list(extra_models)
 
     overrides_env = os.environ.get("VERTEX_LOCATION_OVERRIDES", "")
     location_overrides = []

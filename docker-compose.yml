@@ -8,6 +8,7 @@ services:
     volumes:
       - ./data:/app/data
       - ./${SA_FILE:-sa.json}:/app/sa.json:ro
+      - ./adc.json:/app/adc.json:ro
     restart: unless-stopped
     logging:
       driver: json-file

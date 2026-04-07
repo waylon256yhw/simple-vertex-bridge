@@ -35,14 +35,15 @@ google/gemini-2.5-flash   ← 自动去除 google/ 前缀
 
 编辑 `.env` 后重启 (`docker compose up -d`)。
 
-### 认证方式（三选一）
+### 认证方式（四选一）
 
-支持三种认证模式，根据你设置的环境变量**自动检测**——只需设一个：
+支持四种认证模式，根据你设置的环境变量**自动检测**——只需设一个：
 
 | 模式 | 你有… | 设置的变量 | 后端 |
 |------|-------|-----------|------|
 | **AI Studio** | Google AI Studio API 密钥 (`AIza...`) | `GEMINI_API_KEY` | `generativelanguage.googleapis.com` |
 | **Service Account** | GCP 服务账号 JSON 密钥文件 | `GOOGLE_APPLICATION_CREDENTIALS` | `aiplatform.googleapis.com` (Vertex AI) |
+| **ADC** | gcloud 生成的 `application_default_credentials.json` | `GOOGLE_APPLICATION_CREDENTIALS` + `VERTEX_PROJECT_ID` | `aiplatform.googleapis.com` (Vertex AI) |
 | **API Key** | Google Cloud API 密钥 | `VERTEX_API_KEY` | `aiplatform.googleapis.com` (Vertex AI) |
 
 #### AI Studio 模式——最简单
@@ -73,6 +74,21 @@ VERTEX_LOCATION=us-central1  # 默认区域
 |------|------|
 | `roles/aiplatform.user` | 调用模型 |
 | `roles/serviceusage.serviceUsageConsumer` | 列出模型 |
+
+#### ADC 模式——适用于 gcloud 开发者凭据
+
+使用 `gcloud auth application-default login` 生成的[应用默认凭据](https://cloud.google.com/docs/authentication/application-default-credentials)（`application_default_credentials.json`）。这是 Google Cloud SDK 在本地使用的标准凭据文件。
+
+适用场景：组织策略禁止创建服务账号密钥，或者不想管理 SA JSON 文件、直接复用本地 gcloud 凭据。
+
+```bash
+GOOGLE_APPLICATION_CREDENTIALS=/path/to/application_default_credentials.json
+VERTEX_PROJECT_ID=your-gcp-project-id   # 必填：用户凭据不携带项目 ID
+VERTEX_LOCATION=global                   # 预览模型需要 global
+VERTEX_API_VERSION=v1beta1               # Gemini 3+ 预览模型需要 v1beta1
+```
+
+> **说明：** ADC 模式在内部复用 `service_account` 代码路径——`google.auth.default()` 对两种凭据类型透明处理。唯一的额外要求是显式设置 `VERTEX_PROJECT_ID`，因为用户凭据不携带项目 ID。
 
 #### API Key 模式——无需 JSON 文件的 Vertex AI
 
@@ -135,10 +151,12 @@ VERTEX_LOCATION_OVERRIDES=gemini-3.1-*=global     # 预览模型 → global
 |------|-------|------|
 | `GEMINI_API_KEY` | — | AI Studio API 密钥（触发 AI Studio 模式） |
 | `VERTEX_API_KEY` | — | Google Cloud API 密钥（触发 Express 模式） |
-| `GOOGLE_APPLICATION_CREDENTIALS` | — | 容器内 SA JSON 路径 |
+| `GOOGLE_APPLICATION_CREDENTIALS` | — | 容器内 SA 或 ADC JSON 路径 |
 | `SA_FILE` | `sa.json` | 宿主机 SA JSON 文件名（Docker 挂载用） |
+| `VERTEX_PROJECT_ID` | — | GCP 项目 ID——ADC 模式必填，SA 模式可选覆盖 |
 | `VERTEX_LOCATION` | `us-central1` | 默认区域（`us-central1`、`global` 等） |
 | `VERTEX_LOCATION_OVERRIDES` | — | 按模型路由区域（`模式=区域,...`） |
+| `VERTEX_API_VERSION` | `v1` | Vertex AI API 版本（`v1` 或 `v1beta1`，Gemini 3+ 预览模型需要 `v1beta1`） |
 | `PROXY_KEY` | *（任意）* | 代理认证，支持 Bearer Token、`x-goog-api-key` 请求头或 `?key=` |
 | `PORT` | `8086` | 服务端口 |
 | `BIND` | `localhost` | 绑定地址 |

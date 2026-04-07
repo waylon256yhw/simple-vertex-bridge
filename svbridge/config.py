@@ -15,6 +15,7 @@ class AppConfig:
     # Service account mode
     project_id: str | None = None
     location: str = "us-central1"
+    api_version: str = "v1"
     location_overrides: list[tuple[str, str]] = field(default_factory=list)
     # API key mode (Vertex)
     api_key: str | None = None
@@ -73,7 +74,9 @@ def load_config() -> AppConfig:
 
     cfg = AppConfig(
         auth_mode=auth_mode,
+        project_id=os.environ.get("VERTEX_PROJECT_ID") or None,
         location=os.environ.get("VERTEX_LOCATION", "us-central1"),
+        api_version=os.environ.get("VERTEX_API_VERSION", "v1"),
         location_overrides=location_overrides,
         api_key=api_key,
         gemini_api_key=gemini_api_key,

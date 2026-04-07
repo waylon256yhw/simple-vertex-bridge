@@ -59,8 +59,9 @@ async def startup():
     )
 
     if app_config.auth_mode == "service_account":
-        logger.info("[Google] Getting project ID...")
-        app_config.project_id = get_gcloud_project_id()
+        if not app_config.project_id:
+            logger.info("[Google] Getting project ID from ADC...")
+            app_config.project_id = get_gcloud_project_id()
         logger.info(f"[Google] Project: {app_config.project_id}")
         logger.info(f"[Google] Location: {app_config.location}")
 

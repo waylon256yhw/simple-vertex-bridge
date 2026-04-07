@@ -105,7 +105,7 @@ class ServiceAccountAuth(AuthProvider):
         pid = self.config.project_id
         base = self._base_url_for(loc)
         return (
-            f"{base}/v1"
+            f"{base}/{self.config.api_version}"
             f"/projects/{pid}/locations/{loc}/endpoints/openapi{path}"
         )
 
@@ -114,7 +114,7 @@ class ServiceAccountAuth(AuthProvider):
         pid = self.config.project_id
         base = self._base_url_for(loc)
         return (
-            f"{base}/v1"
+            f"{base}/{self.config.api_version}"
             f"/projects/{pid}/locations/{loc}"
             f"/publishers/google/models/{model}:{method}"
         )

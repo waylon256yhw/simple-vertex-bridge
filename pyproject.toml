@@ -2,6 +2,9 @@
 requires = ["setuptools>=78.0"]
 build-backend = "setuptools.build_meta"
 
+[tool.setuptools.packages.find]
+include = ["svbridge*"]
+
 [project]
 name = "simple-vertex-bridge"
 version = "0.4.0"
@@ -13,6 +16,7 @@ license = "Unlicense"
 license-files = ["LICENSE"]
 dependencies = [
     "google-auth",
+    "requests",
     "fastapi",
     "uvicorn",
     "httpx[http2,socks]",

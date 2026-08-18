@@ -84,23 +84,29 @@ def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, 
 # --- OpenAI-compatible endpoint ---
 
 
-@router.api_route("/chat/completions", methods=["GET", "POST"])
+@router.api_route("/chat/completions", methods=["POST"])
 async def chat_completions(request: Request):
     logger.info(f"[Proxy] {request.method} /v1/chat/completions")
 
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    if not isinstance(body, dict):
+        raise HTTPException(status_code=400, detail="Request body must be a JSON object")
+
     if app_config.auth_mode == "service_account":
-        raw = await request.json()
-        raw["model"] = _normalize_model(raw.get("model", ""))
-        url = auth.build_openai_url("/chat/completions", model=raw["model"])
+        body["model"] = _normalize_model(body.get("model", ""))
+        url = auth.build_openai_url("/chat/completions", model=body["model"])
         qs = _forward_query(request)
         if qs:
             url += "?" + qs
         headers = _proxy_headers(request, await auth.get_headers())
-        body = json.dumps(raw).encode()
-        return await stream_proxy(http_client, request.method, url, headers, body)
+        payload = json.dumps(body).encode()
+        return await stream_proxy(http_client, request.method, url, headers, payload)
 
     # API key / AI Studio mode: convert OpenAI -> Gemini -> OpenAI
-    body = await request.json()
     model, gemini_body, is_stream = openai_to_gemini(body)
 
     method = "streamGenerateContent" if is_stream else "generateContent"
@@ -174,8 +180,6 @@ async def models(request: Request):
         headers = {"Content-Type": "application/json"}
         auth_headers = await auth.get_headers()
         headers.update(auth_headers)
-        if app_config.auth_mode == "service_account" and app_config.project_id:
-            headers["x-goog-user-project"] = app_config.project_id
 
         for attempt in range(3):
             try:

@@ -95,6 +95,36 @@ async def gemini_stream_to_openai(
             except json.JSONDecodeError:
                 continue
 
+            if "error" in gemini_chunk:
+                error_obj = gemini_chunk["error"]
+                err_msg = error_obj.get("message", "Unknown upstream error") if isinstance(error_obj, dict) else str(error_obj)
+                err_chunk = {
+                    "error": {
+                        "message": err_msg,
+                        "type": "upstream_error",
+                        "code": error_obj.get("code", 500) if isinstance(error_obj, dict) else 500,
+                    }
+                }
+                yield f"data: {json.dumps(err_chunk)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+                return
+
+            if "promptFeedback" in gemini_chunk and "blockReason" in gemini_chunk["promptFeedback"]:
+                chunk = {
+                    "id": chat_id,
+                    "object": "chat.completion.chunk",
+                    "created": created,
+                    "model": model,
+                    "choices": [{
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "content_filter",
+                    }],
+                }
+                yield f"data: {json.dumps(chunk)}\n\n".encode()
+                yield b"data: [DONE]\n\n"
+                return
+
             for candidate in gemini_chunk.get("candidates", []):
                 parts = candidate.get("content", {}).get("parts", [])
                 text = "".join(p.get("text", "") for p in parts)

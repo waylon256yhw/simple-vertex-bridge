@@ -4,11 +4,8 @@ import asyncio
 import logging
 from abc import ABC, abstractmethod
 from datetime import datetime, timedelta, timezone
-from threading import RLock
 
-from apscheduler.schedulers.background import BackgroundScheduler
-
-from .config import AppConfig, save_token
+from .config import AppConfig
 
 logger = logging.getLogger("svbridge")
 
@@ -39,53 +36,57 @@ class AuthProvider(ABC):
 class ServiceAccountAuth(AuthProvider):
     def __init__(self, config: AppConfig):
         self.config = config
-        self._lock = RLock()
-        self._scheduler: BackgroundScheduler | None = None
+        self._credentials = None
+        self._lock = asyncio.Lock()
+        self._token: str | None = None
+        self._expiry: datetime | None = None
+        self._bg_task: asyncio.Task | None = None
 
-    def _generate_token(self) -> tuple[str, datetime] | tuple[None, None]:
+    def _sync_refresh(self) -> tuple[str | None, datetime | None]:
         from google.auth import default
         from google.auth.transport.requests import Request
 
         try:
-            credentials, _ = default(
-                scopes=["https://www.googleapis.com/auth/cloud-platform"]
-            )
-            credentials.refresh(Request())
-            token = credentials.token
-            expiry = credentials.expiry.replace(tzinfo=timezone.utc)
+            if self._credentials is None:
+                self._credentials, _ = default(
+                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
+                )
+            self._credentials.refresh(Request())
+            token = self._credentials.token
+            expiry = self._credentials.expiry
+            if expiry:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                else:
+                    expiry = expiry.astimezone(timezone.utc)
             return token, expiry
         except Exception as e:
             logger.error(f"[Token] Failed to fetch token: {e}")
             return None, None
 
     def _is_valid(self) -> bool:
-        if not self.config.access_token or not self.config.token_expiry:
+        if not self._token or not self._expiry:
             return False
-        expiry = datetime.fromisoformat(self.config.token_expiry)
-        return datetime.now(timezone.utc) + TOKEN_EXPIRY_BUFFER < expiry
+        return datetime.now(timezone.utc) + TOKEN_EXPIRY_BUFFER < self._expiry
 
-    def refresh_token(self, force: bool = False) -> bool:
-        with self._lock:
-            if not force and self._is_valid():
-                logger.info("[Token] No refresh needed")
-                return True
-            new_token, new_exp = self._generate_token()
-            if new_token and new_exp:
-                self.config.access_token = new_token
-                self.config.token_expiry = new_exp.isoformat()
-                save_token(self.config)
-                logger.info("[Token] Token refreshed")
-                return True
-            logger.error("[Token] Token refresh failed")
-            return False
+    async def _refresh_token(self) -> bool:
+        token, expiry = await asyncio.to_thread(self._sync_refresh)
+        if token and expiry:
+            self._token = token
+            self._expiry = expiry
+            logger.info("[Token] Token refreshed")
+            return True
+        logger.error("[Token] Token refresh failed")
+        return False
 
     async def get_headers(self) -> dict[str, str]:
         if not self._is_valid():
-            await asyncio.to_thread(self.refresh_token, True)
-        token = self.config.access_token
-        if not token:
-            raise RuntimeError("No valid token available")
-        headers = {"Authorization": f"Bearer {token}"}
+            async with self._lock:
+                if not self._is_valid():
+                    await self._refresh_token()
+        if not self._token:
+            raise RuntimeError("No valid access token available")
+        headers = {"Authorization": f"Bearer {self._token}"}
         if self.config.project_id:
             headers["x-goog-user-project"] = self.config.project_id
         return headers
@@ -125,25 +126,35 @@ class ServiceAccountAuth(AuthProvider):
             f"/v1beta1/publishers/{publisher}/models"
         )
 
+    async def _background_refresh_loop(self) -> None:
+        await self._refresh_token()
+        while True:
+            try:
+                await asyncio.sleep(BACKGROUND_INTERVAL * 60)
+                if not self._is_valid():
+                    async with self._lock:
+                        if not self._is_valid():
+                            await self._refresh_token()
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"[Background] Token refresh loop error: {e}")
+
     def start(self) -> None:
-        self.refresh_token()
         if self.config.auto_refresh:
-            self._scheduler = BackgroundScheduler()
-            self._scheduler.add_job(
-                self.refresh_token, "interval", minutes=BACKGROUND_INTERVAL
-            )
-            self._scheduler.start()
+            self._bg_task = asyncio.create_task(self._background_refresh_loop())
             logger.info(
-                f"[Background] Token refresh every {BACKGROUND_INTERVAL} minutes"
+                f"[Background] Async token refresh scheduled every {BACKGROUND_INTERVAL} minutes"
             )
 
     def stop(self) -> None:
-        if self._scheduler:
-            self._scheduler.shutdown(wait=False)
+        if self._bg_task and not self._bg_task.done():
+            self._bg_task.cancel()
 
 
 class ApiKeyAuth(AuthProvider):
     def __init__(self, config: AppConfig):
+        self.config = config
         self.api_key = config.api_key or ""
 
     async def get_headers(self) -> dict[str, str]:
@@ -161,7 +172,7 @@ class ApiKeyAuth(AuthProvider):
 
     def build_gemini_url(self, model: str, method: str) -> str:
         return self._append_key(
-            f"https://aiplatform.googleapis.com/v1"
+            f"https://aiplatform.googleapis.com/{self.config.api_version}"
             f"/publishers/google/models/{model}:{method}"
         )
 
@@ -198,7 +209,11 @@ def get_gcloud_project_id() -> str:
     from google.auth import default
 
     _, project_id = default()
-    assert project_id, "Project ID not found, please set up gcloud authentication"
+    if not project_id:
+        raise RuntimeError(
+            "Project ID not found in ADC. Please specify VERTEX_PROJECT_ID "
+            "or set up gcloud authentication"
+        )
     return project_id
 
 

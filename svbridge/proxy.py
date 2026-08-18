@@ -26,12 +26,9 @@ async def stream_proxy(
 
     ait = _stream()
     status_code, media_type = await ait.__anext__()
-    assert isinstance(status_code, int)
-    assert isinstance(media_type, str)
 
     async def _body():
         async for chunk in ait:
-            assert isinstance(chunk, bytes)
             yield chunk
 
     return StreamingResponse(_body(), status_code=status_code, media_type=media_type)
@@ -69,13 +66,28 @@ async def _stream_with_convert(
     headers: dict[str, str],
     body: bytes,
     model: str,
-) -> StreamingResponse:
-    async def _converted():
+) -> Response | StreamingResponse:
+    async def _stream():
         async with client.stream("POST", url, headers=headers, content=body) as resp:
             if resp.status_code != 200:
-                yield await resp.aread()
+                err_content = await resp.aread()
+                yield resp.status_code, err_content
                 return
+            yield resp.status_code, None
             async for chunk in gemini_stream_to_openai(resp.aiter_bytes(), model):
                 yield chunk
 
-    return StreamingResponse(_converted(), media_type="text/event-stream")
+    ait = _stream()
+    status_code, err_content = await ait.__anext__()
+    if status_code != 200:
+        return Response(
+            content=err_content,
+            status_code=status_code,
+            media_type="application/json",
+        )
+
+    async def _body():
+        async for chunk in ait:
+            yield chunk
+
+    return StreamingResponse(_body(), status_code=200, media_type="text/event-stream")

@@ -1,13 +1,9 @@
 from __future__ import annotations
 
-import json
 import os
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Literal
-
-CONFIG_FILE = "svbridge-config.json"
-
 
 @dataclass
 class AppConfig:
@@ -34,9 +30,6 @@ class AppConfig:
         "anthropic/claude-",
         "meta/llama",
     )
-    # Token persistence (SA mode only)
-    access_token: str | None = None
-    token_expiry: str | None = None
 
     def resolve_location(self, model: str) -> str:
         bare = model.split("/")[-1] if "/" in model else model
@@ -72,7 +65,7 @@ def load_config() -> AppConfig:
             if pattern.strip() and loc.strip():
                 location_overrides.append((pattern.strip(), loc.strip()))
 
-    cfg = AppConfig(
+    return AppConfig(
         auth_mode=auth_mode,
         project_id=os.environ.get("VERTEX_PROJECT_ID") or None,
         location=os.environ.get("VERTEX_LOCATION", "us-central1"),
@@ -88,31 +81,3 @@ def load_config() -> AppConfig:
         publishers=publishers,
         extra_models=extra_models,
     )
-
-    # Load persisted token from config file (SA mode)
-    if auth_mode == "service_account" and os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE) as f:
-                saved = json.load(f)
-            cfg.access_token = saved.get("access_token")
-            cfg.token_expiry = saved.get("token_expiry")
-            if saved.get("key"):
-                cfg.proxy_key = cfg.proxy_key or saved["key"]
-        except (json.JSONDecodeError, OSError):
-            pass
-
-    return cfg
-
-
-def save_token(cfg: AppConfig) -> None:
-    data = {}
-    if os.path.exists(CONFIG_FILE):
-        try:
-            with open(CONFIG_FILE) as f:
-                data = json.load(f)
-        except (json.JSONDecodeError, OSError):
-            pass
-    data["access_token"] = cfg.access_token
-    data["token_expiry"] = cfg.token_expiry
-    with open(CONFIG_FILE, "w") as f:
-        json.dump(data, f, indent=2)

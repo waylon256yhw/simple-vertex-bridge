@@ -59,6 +59,9 @@ async def verify_token(request: Request, authorization: str | None = Header(None
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_token)])
 
 
+CLIENT_VERSION = "simple-vertex-bridge/0.4.0"
+
+
 def _normalize_model(model: str) -> str:
     """Auto-prefix 'google/' if model name has no publisher prefix."""
     if "/" not in model:
@@ -78,6 +81,7 @@ def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, 
         if k.lower() not in ("host", "authorization", "content-length", "x-goog-api-key")
     }
     headers.update(auth_headers)
+    headers["x-goog-api-client"] = CLIENT_VERSION
     return headers
 
 
@@ -116,6 +120,7 @@ async def chat_completions(request: Request):
 
     headers = {"Content-Type": "application/json"}
     headers.update(await auth.get_headers())
+    headers["x-goog-api-client"] = CLIENT_VERSION
     payload = json.dumps(gemini_body).encode()
 
     return await proxy_gemini_as_openai(
@@ -143,6 +148,9 @@ async def generate_content(model_path: str, request: Request):
     model = _parse_model_path(model_path)
     logger.info(f"[Proxy] POST models/{model}:generateContent")
     url = auth.build_gemini_url(model, "generateContent")
+    qs = _forward_query(request)
+    if qs:
+        url += f"&{qs}" if "?" in url else f"?{qs}"
     headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()
@@ -177,7 +185,7 @@ async def models(request: Request):
 
     async def _fetch(publisher: str) -> list[dict]:
         url = auth.build_models_url(publisher)
-        headers = {"Content-Type": "application/json"}
+        headers = {"Content-Type": "application/json", "x-goog-api-client": CLIENT_VERSION}
         auth_headers = await auth.get_headers()
         headers.update(auth_headers)
 
@@ -257,5 +265,12 @@ async def models(request: Request):
         owner = model_id.split("/")[0] if "/" in model_id else "google"
         all_models.append({"id": model_id, "object": "model", "owned_by": owner})
 
-    logger.info(f"[Models] Returning {len(all_models)} models")
-    return {"object": "list", "data": all_models}
+    seen: set[str] = set()
+    deduped_models: list[dict] = []
+    for m in all_models:
+        if m["id"] not in seen:
+            seen.add(m["id"])
+            deduped_models.append(m)
+
+    logger.info(f"[Models] Returning {len(deduped_models)} models")
+    return {"object": "list", "data": deduped_models}

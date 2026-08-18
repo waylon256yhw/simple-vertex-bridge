@@ -48,6 +48,7 @@ app.include_router(root_router)
 async def startup():
     global http_client, auth, app_config
 
+    setup_logging()
     app_config = load_config()
 
     http_client = httpx.AsyncClient(
@@ -80,6 +81,8 @@ def setup_logging():
         format="%(asctime)s [%(levelname)s] %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
 
 
 def print_banner(cfg: AppConfig):

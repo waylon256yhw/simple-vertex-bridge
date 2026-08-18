@@ -155,11 +155,7 @@ class ApiKeyAuth(AuthProvider):
         self.api_key = config.api_key or ""
 
     async def get_headers(self) -> dict[str, str]:
-        return {}
-
-    def _append_key(self, url: str) -> str:
-        sep = "&" if "?" in url else "?"
-        return f"{url}{sep}key={self.api_key}"
+        return {"x-goog-api-key": self.api_key}
 
     def build_openai_url(self, path: str, model: str = "") -> str:
         raise NotImplementedError(
@@ -168,15 +164,13 @@ class ApiKeyAuth(AuthProvider):
         )
 
     def build_gemini_url(self, model: str, method: str) -> str:
-        return self._append_key(
+        return (
             f"https://aiplatform.googleapis.com/{self.config.api_version}"
             f"/publishers/google/models/{model}:{method}"
         )
 
     def build_models_url(self, publisher: str) -> str:
-        return self._append_key(
-            f"https://aiplatform.googleapis.com/v1beta1/publishers/{publisher}/models"
-        )
+        return f"https://aiplatform.googleapis.com/v1beta1/publishers/{publisher}/models"
 
 
 class AIStudioAuth(AuthProvider):

@@ -39,7 +39,8 @@ def test_aistudio_urls():
         auth.build_openai_url("/chat/completions")
 
 
-def test_api_key_urls():
+@pytest.mark.asyncio
+async def test_api_key_urls():
     cfg = AppConfig(auth_mode="api_key", api_key="vertex-key", api_version="v1beta1")
     auth = ApiKeyAuth(cfg)
     url = auth.build_gemini_url("gemini-3.1-pro-preview", "generateContent")
@@ -47,7 +48,8 @@ def test_api_key_urls():
         "https://aiplatform.googleapis.com/v1beta1/publishers/google/models/gemini-3.1-pro-preview:generateContent"
         in url
     )
-    assert "key=vertex-key" in url
+    headers = await auth.get_headers()
+    assert headers == {"x-goog-api-key": "vertex-key"}
 
 
 def test_service_account_urls():

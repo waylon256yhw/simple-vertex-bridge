@@ -2,11 +2,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from fastapi import FastAPI
+from fastapi import APIRouter, FastAPI
 
 from .auth import AuthProvider, create_auth, get_gcloud_project_id
 from .config import AppConfig, load_config
@@ -32,9 +33,6 @@ app.include_router(router)
 app.include_router(gemini_router, prefix="/v1")
 app.include_router(gemini_router, prefix="/v1beta")
 
-# Also mount without /v1 prefix for backward compat
-from fastapi import APIRouter
-
 root_router = APIRouter()
 
 
@@ -51,7 +49,6 @@ async def startup():
     global http_client, auth, app_config
 
     app_config = load_config()
-    logger.info(f"[Config] Auth mode: {app_config.auth_mode}")
 
     http_client = httpx.AsyncClient(
         http2=True,
@@ -59,28 +56,14 @@ async def startup():
         timeout=httpx.Timeout(connect=10, read=600, write=60, pool=30),
     )
 
-    if app_config.auth_mode == "service_account":
-        if not app_config.project_id:
-            logger.info("[Google] Getting project ID from ADC...")
-            app_config.project_id = get_gcloud_project_id()
-        logger.info(f"[Google] Project: {app_config.project_id}")
-        logger.info(f"[Google] Location: {app_config.location}")
+    if app_config.auth_mode == "service_account" and not app_config.project_id:
+        logger.info("[Google] Getting project ID from ADC...")
+        app_config.project_id = get_gcloud_project_id()
 
     auth = create_auth(app_config)
     auth.start()
 
     init_routes(app_config, auth, http_client)
-
-    if app_config.auth_mode == "api_key":
-        logger.info("[Mode] API Key (Express) | Global endpoint")
-    elif app_config.auth_mode == "aistudio":
-        logger.info("[Mode] AI Studio | generativelanguage.googleapis.com")
-    else:
-        logger.info(
-            f"[Mode] Service Account | "
-            f"Project: {app_config.project_id} | "
-            f"Location: {app_config.location}"
-        )
 
 
 async def shutdown():
@@ -89,6 +72,33 @@ async def shutdown():
     if http_client:
         await http_client.aclose()
     logger.info("[Shutdown] Cleanup complete")
+
+
+def setup_logging():
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+
+def print_banner(cfg: AppConfig):
+    mode_display = {
+        "aistudio": "AI Studio (generativelanguage.googleapis.com)",
+        "api_key": "Vertex Express API Key (aiplatform.googleapis.com)",
+        "service_account": f"Vertex Service Account (Project: {cfg.project_id or 'auto'}, Location: {cfg.location})",
+    }.get(cfg.auth_mode, cfg.auth_mode)
+
+    key_display = (
+        f"Protected (Key: {cfg.proxy_key[:3]}***)" if cfg.proxy_key else "Open (No PROXY_KEY set)"
+    )
+
+    logger.info("=" * 62)
+    logger.info("  Simple Vertex Bridge v0.4.0")
+    logger.info(f"  Auth Mode : {mode_display}")
+    logger.info(f"  Server    : http://{cfg.bind}:{cfg.port}")
+    logger.info(f"  Security  : {key_display}")
+    logger.info("=" * 62)
 
 
 def main():
@@ -111,9 +121,6 @@ def main():
 
     args = parser.parse_args()
 
-    # CLI args override env vars (env vars are read in load_config)
-    import os
-
     if args.port is not None:
         os.environ["PORT"] = str(args.port)
     if args.bind is not None:
@@ -127,22 +134,15 @@ def main():
 
     cfg = load_config()
 
-    bind = cfg.bind
-    port = cfg.port
-    key = cfg.proxy_key
+    setup_logging()
+    print_banner(cfg)
 
-    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
-
-    logger.info("--------")
-    logger.info(f"Server: http://{bind}:{port}")
-    logger.info(f"Auth mode: {cfg.auth_mode}")
-    if bind not in ("localhost", "127.0.0.1", "::1") and not key:
-        logger.warning("[Auth] Server is exposed without a key, PLEASE SET PROXY_KEY!")
-    elif key:
-        logger.info(f'Proxy key: "{key}"')
-    logger.info("--------")
-
-    uvicorn.run("svbridge.main:app", host=bind, port=port)
+    uvicorn.run(
+        "svbridge.main:app",
+        host=cfg.bind,
+        port=cfg.port,
+        access_log=False,
+    )
 
 
 if __name__ == "__main__":

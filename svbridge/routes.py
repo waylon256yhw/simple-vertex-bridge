@@ -4,6 +4,7 @@ import asyncio
 import json
 import logging
 import secrets
+import time
 from urllib.parse import urlencode
 
 import httpx
@@ -39,20 +40,29 @@ async def verify_token(request: Request, authorization: str | None = Header(None
         if len(parts) == 2 and parts[0].lower() == "bearer":
             if secrets.compare_digest(parts[1], app_config.proxy_key):
                 return
+            logger.warning(f"[Auth] 401 Invalid Bearer token | {request.method} {request.url.path}")
             raise HTTPException(status_code=401, detail="Invalid token")
+        logger.warning(
+            f"[Auth] 401 Invalid Authorization header format | {request.method} {request.url.path}"
+        )
         raise HTTPException(status_code=401, detail="Invalid Authorization format")
     # Check x-goog-api-key header (used by native Gemini SDK clients)
     goog_key = request.headers.get("x-goog-api-key")
     if goog_key:
         if secrets.compare_digest(goog_key, app_config.proxy_key):
             return
+        logger.warning(f"[Auth] 401 Invalid x-goog-api-key | {request.method} {request.url.path}")
         raise HTTPException(status_code=401, detail="Invalid key")
     # Fall back to ?key= query parameter for Gemini API clients
     key_param = request.query_params.get("key")
     if key_param is not None:
         if secrets.compare_digest(key_param, app_config.proxy_key) if key_param else False:
             return
+        logger.warning(
+            f"[Auth] 401 Invalid ?key= query param | {request.method} {request.url.path}"
+        )
         raise HTTPException(status_code=401, detail="Invalid key")
+    logger.warning(f"[Auth] 401 Missing Authorization header | {request.method} {request.url.path}")
     raise HTTPException(status_code=401, detail="Missing Authorization header")
 
 
@@ -91,8 +101,6 @@ def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, 
 
 @router.api_route("/chat/completions", methods=["POST"])
 async def chat_completions(request: Request):
-    logger.info(f"[Proxy] {request.method} /v1/chat/completions")
-
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
@@ -101,15 +109,20 @@ async def chat_completions(request: Request):
     if not isinstance(body, dict):
         raise HTTPException(status_code=400, detail="Request body must be a JSON object")
 
+    raw_model = body.get("model", "")
+    is_stream = bool(body.get("stream", False))
+
     if app_config.auth_mode == "service_account":
-        body["model"] = _normalize_model(body.get("model", ""))
-        url = auth.build_openai_url("/chat/completions", model=body["model"])
+        model = _normalize_model(raw_model)
+        body["model"] = model
+        url = auth.build_openai_url("/chat/completions", model=model)
         qs = _forward_query(request)
         if qs:
             url += "?" + qs
         headers = _proxy_headers(request, await auth.get_headers())
         payload = json.dumps(body).encode()
-        return await stream_proxy(http_client, request.method, url, headers, payload)
+        tag = f"[Chat] {model} | stream={is_stream} (SA)"
+        return await stream_proxy(http_client, request.method, url, headers, payload, log_tag=tag)
 
     # API key / AI Studio mode: convert OpenAI -> Gemini -> OpenAI
     model, gemini_body, is_stream = openai_to_gemini(body)
@@ -124,7 +137,10 @@ async def chat_completions(request: Request):
     headers["x-goog-api-client"] = CLIENT_VERSION
     payload = json.dumps(gemini_body).encode()
 
-    return await proxy_gemini_as_openai(http_client, url, headers, payload, model, is_stream)
+    tag = f"[Chat] {model} | stream={is_stream}"
+    return await proxy_gemini_as_openai(
+        http_client, url, headers, payload, model, is_stream, log_tag=tag
+    )
 
 
 def _parse_model_path(model_path: str) -> str:
@@ -145,7 +161,6 @@ gemini_router = APIRouter(dependencies=[Depends(verify_token)])
 @gemini_router.api_route("/models/{model_path:path}:generateContent", methods=["POST"])
 async def generate_content(model_path: str, request: Request):
     model = _parse_model_path(model_path)
-    logger.info(f"[Proxy] POST models/{model}:generateContent")
     url = auth.build_gemini_url(model, "generateContent")
     qs = _forward_query(request)
     if qs:
@@ -153,7 +168,11 @@ async def generate_content(model_path: str, request: Request):
     headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()
+    start_t = time.perf_counter()
     resp = await http_client.post(url, headers=headers, content=body)
+    duration_ms = int((time.perf_counter() - start_t) * 1000)
+    level = logger.info if resp.status_code == 200 else logger.warning
+    level(f"[Native] {model}:generateContent | status={resp.status_code} ({duration_ms}ms)")
     return Response(
         content=resp.content,
         status_code=resp.status_code,
@@ -164,7 +183,6 @@ async def generate_content(model_path: str, request: Request):
 @gemini_router.api_route("/models/{model_path:path}:streamGenerateContent", methods=["POST"])
 async def stream_generate_content(model_path: str, request: Request):
     model = _parse_model_path(model_path)
-    logger.info(f"[Proxy] POST models/{model}:streamGenerateContent")
     url = auth.build_gemini_url(model, "streamGenerateContent")
     qs = _forward_query(request)
     if qs:
@@ -172,7 +190,8 @@ async def stream_generate_content(model_path: str, request: Request):
     headers = _proxy_headers(request, await auth.get_headers())
     headers["Content-Type"] = "application/json"
     body = await request.body()
-    return await stream_proxy(http_client, "POST", url, headers, body)
+    tag = f"[Native] {model}:streamGenerateContent"
+    return await stream_proxy(http_client, "POST", url, headers, body, log_tag=tag)
 
 
 # --- Model listing ---
@@ -180,7 +199,7 @@ async def stream_generate_content(model_path: str, request: Request):
 
 @router.api_route("/models", methods=["GET"])
 async def models(request: Request):
-    logger.info("[Models] Fetching model list")
+    start_t = time.perf_counter()
 
     async def _fetch(publisher: str) -> list[dict]:
         url = auth.build_models_url(publisher)
@@ -192,7 +211,7 @@ async def models(request: Request):
             try:
                 resp = await http_client.get(url, headers=headers)
                 if resp.status_code != 200:
-                    logger.warning(f"[Models] {publisher}: {resp.status_code}")
+                    logger.warning(f"[Models] {publisher} returned status {resp.status_code}")
                     return []
                 data = resp.json()
                 result = []
@@ -246,10 +265,9 @@ async def models(request: Request):
                 return result
             except httpx.RequestError as e:
                 if attempt < 2:
-                    logger.warning(f"[Models] {publisher} retry: {e}")
                     await asyncio.sleep(0.2)
                     continue
-                logger.warning(f"[Models] {publisher} failed: {e}")
+                logger.warning(f"[Models] {publisher} request failed: {e}")
                 return []
         return []
 
@@ -279,5 +297,6 @@ async def models(request: Request):
             seen.add(m["id"])
             deduped_models.append(m)
 
-    logger.info(f"[Models] Returning {len(deduped_models)} models")
+    duration_ms = int((time.perf_counter() - start_t) * 1000)
+    logger.info(f"[Models] list | {len(deduped_models)} models returned ({duration_ms}ms)")
     return {"object": "list", "data": deduped_models}

@@ -77,7 +77,8 @@ def _forward_query(request: Request) -> str:
 
 def _proxy_headers(request: Request, auth_headers: dict[str, str]) -> dict[str, str]:
     headers = {
-        k: v for k, v in request.headers.items()
+        k: v
+        for k, v in request.headers.items()
         if k.lower() not in ("host", "authorization", "content-length", "x-goog-api-key")
     }
     headers.update(auth_headers)
@@ -94,7 +95,7 @@ async def chat_completions(request: Request):
 
     try:
         body = await request.json()
-    except Exception:
+    except Exception:  # noqa: BLE001
         raise HTTPException(status_code=400, detail="Invalid JSON body")
 
     if not isinstance(body, dict):
@@ -123,9 +124,7 @@ async def chat_completions(request: Request):
     headers["x-goog-api-client"] = CLIENT_VERSION
     payload = json.dumps(gemini_body).encode()
 
-    return await proxy_gemini_as_openai(
-        http_client, url, headers, payload, model, is_stream
-    )
+    return await proxy_gemini_as_openai(http_client, url, headers, payload, model, is_stream)
 
 
 def _parse_model_path(model_path: str) -> str:
@@ -203,11 +202,13 @@ async def models(request: Request):
                     for m in data["models"]:
                         name = m.get("name", "")
                         model_id = name.removeprefix("models/")
-                        result.append({
-                            "id": model_id,
-                            "object": "model",
-                            "owned_by": "google",
-                        })
+                        result.append(
+                            {
+                                "id": model_id,
+                                "object": "model",
+                                "owned_by": "google",
+                            }
+                        )
                     # Handle pagination
                     while data.get("nextPageToken"):
                         sep = "&" if "?" in url else "?"
@@ -219,11 +220,13 @@ async def models(request: Request):
                         for m in data.get("models", []):
                             name = m.get("name", "")
                             model_id = name.removeprefix("models/")
-                            result.append({
-                                "id": model_id,
-                                "object": "model",
-                                "owned_by": "google",
-                            })
+                            result.append(
+                                {
+                                    "id": model_id,
+                                    "object": "model",
+                                    "owned_by": "google",
+                                }
+                            )
                     return result
 
                 # Vertex format: {"publisherModels": [...]}
@@ -233,11 +236,13 @@ async def models(request: Request):
                     if len(parts) == 4 and parts[0] == "publishers" and parts[2] == "models":
                         pub, model_name = parts[1], parts[3]
                         model_id = model_name if pub == "google" else f"{pub}/{model_name}"
-                        result.append({
-                            "id": model_id,
-                            "object": "model",
-                            "owned_by": pub,
-                        })
+                        result.append(
+                            {
+                                "id": model_id,
+                                "object": "model",
+                                "owned_by": pub,
+                            }
+                        )
                 return result
             except httpx.RequestError as e:
                 if attempt < 2:
@@ -246,6 +251,7 @@ async def models(request: Request):
                     continue
                 logger.warning(f"[Models] {publisher} failed: {e}")
                 return []
+        return []
 
     pubs = ["google"] if app_config.auth_mode == "aistudio" else app_config.publishers
     tasks = [_fetch(pub) for pub in pubs]
@@ -257,7 +263,8 @@ async def models(request: Request):
 
     if app_config.filter_model_names:
         all_models = [
-            m for m in all_models
+            m
+            for m in all_models
             if any(m["id"].startswith(prefix) for prefix in app_config.model_names_filter)
         ]
 

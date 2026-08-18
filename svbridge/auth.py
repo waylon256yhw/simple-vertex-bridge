@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from .config import AppConfig
 
@@ -18,7 +18,7 @@ class AuthProvider(ABC):
     async def get_headers(self) -> dict[str, str]: ...
 
     @abstractmethod
-    def build_openai_url(self, path: str) -> str: ...
+    def build_openai_url(self, path: str, model: str = "") -> str: ...
 
     @abstractmethod
     def build_gemini_url(self, model: str, method: str) -> str: ...
@@ -47,27 +47,27 @@ class ServiceAccountAuth(AuthProvider):
         from google.auth.transport.requests import Request
 
         try:
-            if self._credentials is None:
-                self._credentials, _ = default(
-                    scopes=["https://www.googleapis.com/auth/cloud-platform"]
-                )
-            self._credentials.refresh(Request())
-            token = self._credentials.token
-            expiry = self._credentials.expiry
+            creds = self._credentials
+            if creds is None:
+                creds, _ = default(scopes=["https://www.googleapis.com/auth/cloud-platform"])
+                self._credentials = creds
+            creds.refresh(Request())
+            token = creds.token
+            expiry = creds.expiry
             if expiry:
                 if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
+                    expiry = expiry.replace(tzinfo=UTC)
                 else:
-                    expiry = expiry.astimezone(timezone.utc)
+                    expiry = expiry.astimezone(UTC)
             return token, expiry
-        except Exception as e:
+        except Exception as e:  # noqa: BLE001
             logger.error(f"[Token] Failed to fetch token: {e}")
             return None, None
 
     def _is_valid(self) -> bool:
         if not self._token or not self._expiry:
             return False
-        return datetime.now(timezone.utc) + TOKEN_EXPIRY_BUFFER < self._expiry
+        return datetime.now(UTC) + TOKEN_EXPIRY_BUFFER < self._expiry
 
     async def _refresh_token(self) -> bool:
         token, expiry = await asyncio.to_thread(self._sync_refresh)
@@ -121,10 +121,7 @@ class ServiceAccountAuth(AuthProvider):
         )
 
     def build_models_url(self, publisher: str) -> str:
-        return (
-            f"{self._base_url}"
-            f"/v1beta1/publishers/{publisher}/models"
-        )
+        return f"{self._base_url}/v1beta1/publishers/{publisher}/models"
 
     async def _background_refresh_loop(self) -> None:
         await self._refresh_token()
@@ -137,7 +134,7 @@ class ServiceAccountAuth(AuthProvider):
                             await self._refresh_token()
             except asyncio.CancelledError:
                 break
-            except Exception as e:
+            except Exception as e:  # noqa: BLE001
                 logger.warning(f"[Background] Token refresh loop error: {e}")
 
     def start(self) -> None:
@@ -164,7 +161,7 @@ class ApiKeyAuth(AuthProvider):
         sep = "&" if "?" in url else "?"
         return f"{url}{sep}key={self.api_key}"
 
-    def build_openai_url(self, path: str) -> str:
+    def build_openai_url(self, path: str, model: str = "") -> str:
         raise NotImplementedError(
             "Express mode has no OpenAI-compatible endpoint; "
             "use body conversion via build_gemini_url instead"
@@ -178,8 +175,7 @@ class ApiKeyAuth(AuthProvider):
 
     def build_models_url(self, publisher: str) -> str:
         return self._append_key(
-            f"https://aiplatform.googleapis.com"
-            f"/v1beta1/publishers/{publisher}/models"
+            f"https://aiplatform.googleapis.com/v1beta1/publishers/{publisher}/models"
         )
 
 
@@ -192,7 +188,7 @@ class AIStudioAuth(AuthProvider):
     async def get_headers(self) -> dict[str, str]:
         return {"x-goog-api-key": self.api_key}
 
-    def build_openai_url(self, path: str) -> str:
+    def build_openai_url(self, path: str, model: str = "") -> str:
         raise NotImplementedError(
             "AI Studio has no OpenAI-compatible endpoint; "
             "use body conversion via build_gemini_url instead"

@@ -92,15 +92,14 @@ svbridge/
 - **Python 3.11+**
 - **FastAPI** — async web framework
 - **uvicorn** — ASGI server
-- **httpx** — async HTTP client with HTTP/2 multiplexing
+- **httpx** — async HTTP client with HTTP/2 and SOCKS support
 - **google-auth** — GCP credential management
-- **APScheduler** — background token refresh
 
 ### Concurrency Design
 
 - Single shared `httpx.AsyncClient(http2=True)` with connection limits (200 max, 50 keepalive)
-- `get_headers()` is async — blocking token refresh runs via `asyncio.to_thread()` to avoid stalling the event loop
-- Token refresh uses `threading.RLock` for thread safety between the request path and APScheduler background thread
+- In-memory OAuth token caching with `asyncio.Lock` and non-blocking `asyncio.to_thread` refresh
+- Background token refresh via async loop (no external scheduling library needed)
 - Explicit timeouts: connect 10s, read 600s, write 60s, pool 30s
 
 ## Development Setup
@@ -108,8 +107,17 @@ svbridge/
 ```bash
 git clone https://github.com/zetaloop/simple-vertex-bridge.git
 cd simple-vertex-bridge
-uv sync
+uv sync --all-groups
 source .venv/bin/activate
+```
+
+### Run Tests & Linting
+
+```bash
+uv run pytest
+uv run ruff check .
+uv run ruff format --check .
+uv run mypy svbridge
 ```
 
 ### Run locally
@@ -130,7 +138,7 @@ docker compose logs -f
 
 ## Format Conversion Reference
 
-Only used in API Key mode for `/v1/chat/completions`.
+Used in API Key / AI Studio modes for `/v1/chat/completions`.
 
 ### Request (OpenAI → Gemini)
 
@@ -138,12 +146,19 @@ Only used in API Key mode for `/v1/chat/completions`.
 |--------|--------|
 | `messages[role=system]` | `systemInstruction.parts[].text` |
 | `messages[role=user]` | `contents[]{role:"user", parts}` |
-| `messages[role=assistant]` | `contents[]{role:"model", parts}` |
-| `content` (string) | `parts[].text` |
+| `messages[role=assistant]` (text) | `contents[]{role:"model", parts[].text}` |
+| `messages[role=assistant]` (`tool_calls`) | `contents[]{role:"model", parts[].functionCall}` |
+| `messages[role=tool]` | `contents[]{role:"user", parts[].functionResponse}` |
 | `content` (image_url, data URI) | `parts[].inlineData{mimeType, data}` |
-| `content` (image_url, URL) | `parts[].fileData{fileUri}` |
+| `content` (image_url, URL) | `parts[].fileData{mimeType, fileUri}` |
+| `tools` (functions) | `tools[].functionDeclarations[]` |
+| `tool_choice` | `toolConfig.functionCallingConfig` |
+| `response_format` (JSON object/schema) | `generationConfig.responseMimeType` & `responseSchema` |
+| `reasoning_effort` / `thinking_budget` | `generationConfig.thinkingConfig.thinkingBudget` |
 | `max_tokens` / `max_completion_tokens` | `generationConfig.maxOutputTokens` |
-| `temperature` / `top_p` | `generationConfig.temperature` / `topP` |
+| `temperature` / `top_p` / `top_k` | `generationConfig.temperature` / `topP` / `topK` |
+| `presence_penalty` / `frequency_penalty` | `generationConfig.presencePenalty` / `frequencyPenalty` |
+| `seed` | `generationConfig.seed` |
 | `stop` | `generationConfig.stopSequences` |
 | `stream: true` | `streamGenerateContent` + `?alt=sse` |
 
@@ -152,6 +167,8 @@ Only used in API Key mode for `/v1/chat/completions`.
 | Gemini | OpenAI |
 |--------|--------|
 | `candidates[0].content.parts[].text` | `choices[0].message.content` |
+| `candidates[0].content.parts[].thought` | `choices[0].message.reasoning_content` |
+| `candidates[0].content.parts[].functionCall` | `choices[0].message.tool_calls` |
 | `usageMetadata` | `usage` |
 | `finishReason: STOP` | `finish_reason: stop` |
 | `finishReason: MAX_TOKENS` | `finish_reason: length` |

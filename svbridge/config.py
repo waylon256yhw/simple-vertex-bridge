@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from fnmatch import fnmatch
 from typing import Literal
 
+
 @dataclass
 class AppConfig:
     auth_mode: Literal["service_account", "api_key", "aistudio"] = "service_account"
@@ -50,7 +51,11 @@ def load_config() -> AppConfig:
         auth_mode = "service_account"
 
     publishers_env = os.environ.get("PUBLISHERS", "")
-    publishers = [p.strip() for p in publishers_env.split(",") if p.strip()] or ["google", "anthropic", "meta"]
+    publishers = [p.strip() for p in publishers_env.split(",") if p.strip()] or [
+        "google",
+        "anthropic",
+        "meta",
+    ]
 
     extra_env = os.environ.get("EXTRA_MODELS", "")
     extra_models = [m.strip() for m in extra_env.split(",") if m.strip()]

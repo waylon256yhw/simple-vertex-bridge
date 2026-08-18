@@ -10,7 +10,8 @@ from fastapi import FastAPI
 
 from .auth import AuthProvider, create_auth, get_gcloud_project_id
 from .config import AppConfig, load_config
-from .routes import init as init_routes, router, gemini_router
+from .routes import gemini_router, router
+from .routes import init as init_routes
 
 logger = logging.getLogger("svbridge")
 
@@ -112,6 +113,7 @@ def main():
 
     # CLI args override env vars (env vars are read in load_config)
     import os
+
     if args.port is not None:
         os.environ["PORT"] = str(args.port)
     if args.bind is not None:

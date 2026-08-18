@@ -12,8 +12,7 @@ def openai_to_gemini(body: dict) -> tuple[str, dict, bool]:
     Returns (model_name, gemini_body, is_stream).
     """
     model = body.get("model", "")
-    if model.startswith("google/"):
-        model = model[len("google/"):]
+    model = model.removeprefix("google/")
 
     is_stream = bool(body.get("stream", False))
 
@@ -45,17 +44,16 @@ def openai_to_gemini(body: dict) -> tuple[str, dict, bool]:
         gen_config["candidateCount"] = n
 
     # Structured Outputs / response_format
-    if response_format := body.get("response_format"):
-        if isinstance(response_format, dict):
-            fmt_type = response_format.get("type")
-            if fmt_type == "json_object":
-                gen_config["responseMimeType"] = "application/json"
-            elif fmt_type == "json_schema":
-                gen_config["responseMimeType"] = "application/json"
-                if schema := response_format.get("json_schema", {}).get("schema"):
-                    gen_config["responseSchema"] = schema
-            elif fmt_type == "text":
-                gen_config["responseMimeType"] = "text/plain"
+    if isinstance(response_format := body.get("response_format"), dict):
+        fmt_type = response_format.get("type")
+        if fmt_type == "json_object":
+            gen_config["responseMimeType"] = "application/json"
+        elif fmt_type == "json_schema":
+            gen_config["responseMimeType"] = "application/json"
+            if schema := response_format.get("json_schema", {}).get("schema"):
+                gen_config["responseSchema"] = schema
+        elif fmt_type == "text":
+            gen_config["responseMimeType"] = "text/plain"
 
     # Thinking / Reasoning configuration (Gemini 2.0 / 3.x)
     thinking_config = _build_thinking_config(body)
@@ -83,16 +81,14 @@ def _build_thinking_config(body: dict) -> dict | None:
     # Check explicit thinking config
     if "thinkingConfig" in body:
         return body["thinkingConfig"]
-    if extra := body.get("extra_body"):
-        if isinstance(extra, dict) and "thinkingConfig" in extra:
-            return extra["thinkingConfig"]
+    if isinstance(extra := body.get("extra_body"), dict) and "thinkingConfig" in extra:
+        return extra["thinkingConfig"]
 
     # Check thinking budget parameters
     if (budget := body.get("thinking_budget")) is not None:
         return {"thinkingBudget": int(budget)}
-    if thinking := body.get("thinking"):
-        if isinstance(thinking, dict) and "budget" in thinking:
-            return {"thinkingBudget": int(thinking["budget"])}
+    if isinstance(thinking := body.get("thinking"), dict) and "budget" in thinking:
+        return {"thinkingBudget": int(thinking["budget"])}
 
     # Map OpenAI reasoning_effort to thinkingBudget
     if reasoning_effort := body.get("reasoning_effort"):
@@ -144,12 +140,11 @@ def _convert_tools(
         elif isinstance(tool_choice, dict) and tool_choice.get("type") == "function":
             fn_name = tool_choice.get("function", {}).get("name")
             if fn_name:
-                gemini_tool_config = {
-                    "functionCallingConfig": {
-                        "mode": "ANY",
-                        "allowedFunctionNames": [fn_name],
-                    }
+                config_dict: dict = {
+                    "mode": "ANY",
+                    "allowedFunctionNames": [fn_name],
                 }
+                gemini_tool_config = {"functionCallingConfig": config_dict}
 
     return gemini_tools, gemini_tool_config
 
@@ -173,17 +168,20 @@ def gemini_to_openai(gemini_resp: dict, model: str) -> dict:
                 text_parts.append(p.get("text", ""))
             elif "functionCall" in p:
                 fc = p["functionCall"]
-                tool_calls.append({
-                    "id": f"call_{uuid.uuid4().hex[:12]}",
-                    "type": "function",
-                    "function": {
-                        "name": fc.get("name", ""),
-                        "arguments": json.dumps(fc.get("args", {})),
-                    },
-                })
+                tool_calls.append(
+                    {
+                        "id": f"call_{uuid.uuid4().hex[:12]}",
+                        "type": "function",
+                        "function": {
+                            "name": fc.get("name", ""),
+                            "arguments": json.dumps(fc.get("args", {})),
+                        },
+                    }
+                )
 
         text = "".join(text_parts)
         message: dict = {"role": "assistant"}
+        finish_reason: str | None
 
         if tool_calls:
             message["content"] = text or None
@@ -196,11 +194,13 @@ def gemini_to_openai(gemini_resp: dict, model: str) -> dict:
         if thought_parts:
             message["reasoning_content"] = "".join(thought_parts)
 
-        choices.append({
-            "index": i,
-            "message": message,
-            "finish_reason": finish_reason,
-        })
+        choices.append(
+            {
+                "index": i,
+                "message": message,
+                "finish_reason": finish_reason,
+            }
+        )
 
     return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
@@ -240,7 +240,11 @@ async def gemini_stream_to_openai(
 
             if "error" in gemini_chunk:
                 error_obj = gemini_chunk["error"]
-                err_msg = error_obj.get("message", "Unknown upstream error") if isinstance(error_obj, dict) else str(error_obj)
+                err_msg = (
+                    error_obj.get("message", "Unknown upstream error")
+                    if isinstance(error_obj, dict)
+                    else str(error_obj)
+                )
                 err_chunk = {
                     "error": {
                         "message": err_msg,
@@ -253,18 +257,20 @@ async def gemini_stream_to_openai(
                 return
 
             if "promptFeedback" in gemini_chunk and "blockReason" in gemini_chunk["promptFeedback"]:
-                chunk = {
+                feedback_chunk = {
                     "id": chat_id,
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "content_filter",
-                    }],
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {},
+                            "finish_reason": "content_filter",
+                        }
+                    ],
                 }
-                yield f"data: {json.dumps(chunk)}\n\n".encode()
+                yield f"data: {json.dumps(feedback_chunk)}\n\n".encode()
                 yield b"data: [DONE]\n\n"
                 return
 
@@ -281,15 +287,17 @@ async def gemini_stream_to_openai(
                         text_parts.append(p.get("text", ""))
                     elif "functionCall" in p:
                         fc = p["functionCall"]
-                        tool_calls.append({
-                            "index": len(tool_calls),
-                            "id": f"call_{uuid.uuid4().hex[:12]}",
-                            "type": "function",
-                            "function": {
-                                "name": fc.get("name", ""),
-                                "arguments": json.dumps(fc.get("args", {})),
-                            },
-                        })
+                        tool_calls.append(
+                            {
+                                "index": len(tool_calls),
+                                "id": f"call_{uuid.uuid4().hex[:12]}",
+                                "type": "function",
+                                "function": {
+                                    "name": fc.get("name", ""),
+                                    "arguments": json.dumps(fc.get("args", {})),
+                                },
+                            }
+                        )
 
                 delta: dict = {}
                 if first_chunk:
@@ -310,11 +318,13 @@ async def gemini_stream_to_openai(
                     "object": "chat.completion.chunk",
                     "created": created,
                     "model": model,
-                    "choices": [{
-                        "index": candidate.get("index", 0),
-                        "delta": delta,
-                        "finish_reason": finish_reason,
-                    }],
+                    "choices": [
+                        {
+                            "index": candidate.get("index", 0),
+                            "delta": delta,
+                            "finish_reason": finish_reason,
+                        }
+                    ],
                 }
 
                 usage_meta = gemini_chunk.get("usageMetadata")
@@ -358,7 +368,9 @@ def _convert_messages(messages: list[dict]) -> tuple[dict | None, list[dict]]:
                 except json.JSONDecodeError:
                     res_obj = {"output": raw_result}
             else:
-                res_obj = raw_result if isinstance(raw_result, dict) else {"output": str(raw_result)}
+                res_obj = (
+                    raw_result if isinstance(raw_result, dict) else {"output": str(raw_result)}
+                )
 
             part = {
                 "functionResponse": {
@@ -381,12 +393,16 @@ def _convert_messages(messages: list[dict]) -> tuple[dict | None, list[dict]]:
                         parsed_args = json.loads(args) if isinstance(args, str) else args
                     except json.JSONDecodeError:
                         parsed_args = {"raw_arguments": args}
-                    parts.append({
-                        "functionCall": {
-                            "name": fn.get("name", ""),
-                            "args": parsed_args if isinstance(parsed_args, dict) else {"value": parsed_args},
+                    parts.append(
+                        {
+                            "functionCall": {
+                                "name": fn.get("name", ""),
+                                "args": parsed_args
+                                if isinstance(parsed_args, dict)
+                                else {"value": parsed_args},
+                            }
                         }
-                    })
+                    )
 
         if parts:
             contents.append({"role": gemini_role, "parts": parts})

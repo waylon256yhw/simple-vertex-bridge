@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 
 import httpx
 import uvicorn
-from fastapi import APIRouter, FastAPI
+from fastapi import APIRouter, FastAPI, Request
 
 from .auth import AuthProvider, create_auth, get_gcloud_project_id
 from .config import AppConfig, load_config
@@ -15,6 +15,8 @@ from .routes import gemini_router, router
 from .routes import init as init_routes
 
 logger = logging.getLogger("svbridge")
+
+VERSION = "0.4.1"
 
 http_client: httpx.AsyncClient | None = None
 auth: AuthProvider | None = None
@@ -29,6 +31,28 @@ async def lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=lifespan)
+
+
+@app.middleware("http")
+async def normalize_path_middleware(request: Request, call_next):
+    path = request.scope.get("path", "")
+    normalized = path
+    for dup in (
+        "/v1beta/v1beta/",
+        "/v1/v1beta/",
+        "/v1beta/v1/",
+        "/v1/v1/",
+        "/v1beta1/v1beta1/",
+    ):
+        if normalized.startswith(dup):
+            target = "/v1beta/" if "v1beta" in dup else "/v1/"
+            normalized = target + normalized[len(dup) :]
+            break
+    if normalized != path:
+        request.scope["path"] = normalized
+    return await call_next(request)
+
+
 app.include_router(router)
 app.include_router(gemini_router, prefix="/v1")
 app.include_router(gemini_router, prefix="/v1beta")
@@ -41,7 +65,7 @@ root_router = APIRouter()
 @root_router.get("/")
 async def root():
     mode = app_config.auth_mode if app_config else "unknown"
-    return {"status": "ok", "auth_mode": mode}
+    return {"status": "ok", "version": VERSION, "auth_mode": mode}
 
 
 app.include_router(root_router)
@@ -99,7 +123,7 @@ def print_banner(cfg: AppConfig):
     )
 
     logger.info("=" * 62)
-    logger.info("  Simple Vertex Bridge v0.4.0")
+    logger.info(f"  Simple Vertex Bridge v{VERSION}")
     logger.info(f"  Auth Mode : {mode_display}")
     logger.info(f"  Server    : http://{cfg.bind}:{cfg.port}")
     logger.info(f"  Security  : {key_display}")

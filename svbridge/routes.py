@@ -69,7 +69,7 @@ async def verify_token(request: Request, authorization: str | None = Header(None
 router = APIRouter(prefix="/v1", dependencies=[Depends(verify_token)])
 
 
-CLIENT_VERSION = "simple-vertex-bridge/0.4.0"
+CLIENT_VERSION = "simple-vertex-bridge/0.4.1"
 
 
 def _normalize_model(model: str) -> str:
@@ -147,9 +147,15 @@ def _parse_model_path(model_path: str) -> str:
     """Parse model path, strip 'models/' or publisher prefix if present."""
     if not model_path:
         raise HTTPException(status_code=400, detail="Invalid model path")
+    model_path = model_path.strip("/")
+    for prefix in ("v1beta/", "v1beta1/", "v1/"):
+        if model_path.startswith(prefix):
+            model_path = model_path.removeprefix(prefix)
     if model_path.startswith("models/"):
         model_path = model_path.removeprefix("models/")
     parts = [p for p in model_path.split("/") if p]
+    if not parts:
+        raise HTTPException(status_code=400, detail="Invalid model path")
     if len(parts) == 1:
         return parts[0]
     if len(parts) == 2 and parts[0] == "google":
@@ -436,6 +442,8 @@ async def models(request: Request):
 
 @router.api_route("/models/{model_path:path}", methods=["GET"])
 async def get_model(model_path: str, request: Request):
+    if not model_path or model_path.strip("/") in ("", "v1beta/models", "v1/models", "v1beta1/models", "models"):
+        return await models(request)
     model_id = _parse_model_path(model_path)
     models_list = await get_model_catalog()
     match = next((m for m in models_list if m["id"] == model_id), None)
@@ -462,6 +470,8 @@ async def gemini_models(request: Request):
 
 @gemini_router.api_route("/models/{model_path:path}", methods=["GET"])
 async def gemini_get_model(model_path: str, request: Request):
+    if not model_path or model_path.strip("/") in ("", "v1beta/models", "v1/models", "v1beta1/models", "models"):
+        return await gemini_models(request)
     model_id = _parse_model_path(model_path)
     models_list = await get_model_catalog()
     match = next((m for m in models_list if m["id"] == model_id), None)

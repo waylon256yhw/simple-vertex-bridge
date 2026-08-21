@@ -32,6 +32,8 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(router)
 app.include_router(gemini_router, prefix="/v1")
 app.include_router(gemini_router, prefix="/v1beta")
+app.include_router(gemini_router, prefix="/v1beta1")
+app.include_router(gemini_router)
 
 root_router = APIRouter()
 

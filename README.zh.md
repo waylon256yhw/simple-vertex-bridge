@@ -178,12 +178,15 @@ simple-vertex-bridge -p 8086 -b 0.0.0.0 -k your-secret
 | 端点 | 格式 | 说明 |
 |------|------|------|
 | `POST /v1/chat/completions` | OpenAI | 聊天补全（支持流式） |
-| `GET /v1/models` | OpenAI | 列出可用模型 |
+| `GET /v1/models` | OpenAI / 自动 | 列出可用模型（携带 Gemini Header/参数或 `?format=gemini` 时自动返回 Gemini 格式） |
+| `GET /v1/models/{model}` | OpenAI / 自动 | 获取单个模型详情 |
+| `GET /v1beta/models` | Gemini | 列出可用模型（Gemini 原生格式，支持 `/v1beta`、`/v1beta1`、`/models`） |
+| `GET /v1beta/models/{model}` | Gemini | 获取单个模型详情（Gemini 原生格式） |
 | `POST /v1/models/{model}:generateContent` | Gemini | Gemini 原生（所有认证模式） |
 | `POST /v1/models/{model}:streamGenerateContent` | Gemini | Gemini 原生流式（所有认证模式） |
-| `POST /v1beta/models/{model}:*` | Gemini | 同上，v1beta 前缀 |
+| `POST /v1beta/models/{model}:*` | Gemini | 同上，支持 `/v1beta` 与 `/v1beta1` 前缀 |
 
-Gemini 端点的模型路径支持 `google/model-name` 或裸 `model-name`。认证方式：`Authorization: Bearer <key>` 请求头或 `?key=<key>` 查询参数。
+Gemini 端点的模型路径支持 `google/model-name` 或裸 `model-name`（例如 `gemini-2.5-flash` 或 `models/gemini-2.5-flash`）。认证方式：`Authorization: Bearer <key>` 请求头、`x-goog-api-key: <key>` 请求头或 `?key=<key>` 查询参数。
 
 ## 开发
 

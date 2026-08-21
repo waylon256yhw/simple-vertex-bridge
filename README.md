@@ -178,12 +178,15 @@ simple-vertex-bridge -p 8086 -b 0.0.0.0 -k your-secret
 | Endpoint | Format | Description |
 |----------|--------|-------------|
 | `POST /v1/chat/completions` | OpenAI | Chat completion (streaming supported) |
-| `GET /v1/models` | OpenAI | List available models |
+| `GET /v1/models` | OpenAI / Auto | List available models (returns Gemini format if called with Gemini headers/params, or `?format=gemini`) |
+| `GET /v1/models/{model}` | OpenAI / Auto | Get single model details |
+| `GET /v1beta/models` | Gemini | List available models in Gemini format (`/v1beta`, `/v1beta1`, `/models`) |
+| `GET /v1beta/models/{model}` | Gemini | Get single model details in Gemini format |
 | `POST /v1/models/{model}:generateContent` | Gemini | Native Gemini (all auth modes) |
 | `POST /v1/models/{model}:streamGenerateContent` | Gemini | Native Gemini streaming (all auth modes) |
-| `POST /v1beta/models/{model}:*` | Gemini | Same as above, v1beta prefix |
+| `POST /v1beta/models/{model}:*` | Gemini | Same as above, `/v1beta` and `/v1beta1` prefix |
 
-Gemini endpoints accept `google/model-name` or bare `model-name` in the path. Auth via `Authorization: Bearer <key>` header, `x-goog-api-key: <key>` header, or `?key=<key>` query parameter.
+Gemini endpoints accept `google/model-name` or bare `model-name` in the path (e.g. `gemini-2.5-flash` or `models/gemini-2.5-flash`). Auth via `Authorization: Bearer <key>` header, `x-goog-api-key: <key>` header, or `?key=<key>` query parameter.
 
 ## Development
 

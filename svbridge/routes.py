@@ -144,13 +144,19 @@ async def chat_completions(request: Request):
 
 
 def _parse_model_path(model_path: str) -> str:
-    """Parse model path, strip publisher prefix if present."""
-    parts = model_path.split("/")
+    """Parse model path, strip 'models/' or publisher prefix if present."""
+    if not model_path:
+        raise HTTPException(status_code=400, detail="Invalid model path")
+    if model_path.startswith("models/"):
+        model_path = model_path.removeprefix("models/")
+    parts = [p for p in model_path.split("/") if p]
     if len(parts) == 1:
         return parts[0]
-    if len(parts) == 2:
+    if len(parts) == 2 and parts[0] == "google":
         return parts[1]
-    raise HTTPException(status_code=400, detail="Invalid model path")
+    if len(parts) == 4 and parts[0] == "publishers" and parts[2] == "models":
+        return parts[3] if parts[1] == "google" else f"{parts[1]}/{parts[3]}"
+    return "/".join(parts)
 
 
 # --- Gemini native endpoints ---
@@ -194,11 +200,10 @@ async def stream_generate_content(model_path: str, request: Request):
     return await stream_proxy(http_client, "POST", url, headers, body, log_tag=tag)
 
 
-# --- Model listing ---
+# --- Model Catalog & Formatting Helpers ---
 
 
-@router.api_route("/models", methods=["GET"])
-async def models(request: Request):
+async def get_model_catalog() -> list[dict]:
     start_t = time.perf_counter()
 
     async def _fetch(publisher: str) -> list[dict]:
@@ -221,13 +226,26 @@ async def models(request: Request):
                     for m in data["models"]:
                         name = m.get("name", "")
                         model_id = name.removeprefix("models/")
-                        result.append(
-                            {
-                                "id": model_id,
-                                "object": "model",
-                                "owned_by": "google",
-                            }
-                        )
+                        item = {
+                            "id": model_id,
+                            "displayName": m.get("displayName") or model_id,
+                            "description": m.get("description", ""),
+                            "owned_by": "google",
+                            "supportedGenerationMethods": m.get(
+                                "supportedGenerationMethods", ["generateContent", "countTokens"]
+                            ),
+                        }
+                        for field in (
+                            "inputTokenLimit",
+                            "outputTokenLimit",
+                            "temperature",
+                            "topP",
+                            "topK",
+                        ):
+                            if field in m:
+                                item[field] = m[field]
+                        result.append(item)
+
                     # Handle pagination
                     while data.get("nextPageToken"):
                         sep = "&" if "?" in url else "?"
@@ -239,13 +257,25 @@ async def models(request: Request):
                         for m in data.get("models", []):
                             name = m.get("name", "")
                             model_id = name.removeprefix("models/")
-                            result.append(
-                                {
-                                    "id": model_id,
-                                    "object": "model",
-                                    "owned_by": "google",
-                                }
-                            )
+                            item = {
+                                "id": model_id,
+                                "displayName": m.get("displayName") or model_id,
+                                "description": m.get("description", ""),
+                                "owned_by": "google",
+                                "supportedGenerationMethods": m.get(
+                                    "supportedGenerationMethods", ["generateContent", "countTokens"]
+                                ),
+                            }
+                            for field in (
+                                "inputTokenLimit",
+                                "outputTokenLimit",
+                                "temperature",
+                                "topP",
+                                "topK",
+                            ):
+                                if field in m:
+                                    item[field] = m[field]
+                            result.append(item)
                     return result
 
                 # Vertex format: {"publisherModels": [...]}
@@ -255,13 +285,14 @@ async def models(request: Request):
                     if len(parts) == 4 and parts[0] == "publishers" and parts[2] == "models":
                         pub, model_name = parts[1], parts[3]
                         model_id = model_name if pub == "google" else f"{pub}/{model_name}"
-                        result.append(
-                            {
-                                "id": model_id,
-                                "object": "model",
-                                "owned_by": pub,
-                            }
-                        )
+                        item = {
+                            "id": model_id,
+                            "displayName": m.get("displayName") or model_name,
+                            "description": m.get("description", ""),
+                            "owned_by": pub,
+                            "supportedGenerationMethods": ["generateContent", "countTokens"],
+                        }
+                        result.append(item)
                 return result
             except httpx.RequestError as e:
                 if attempt < 2:
@@ -288,7 +319,15 @@ async def models(request: Request):
 
     for model_id in app_config.extra_models:
         owner = model_id.split("/")[0] if "/" in model_id else "google"
-        all_models.append({"id": model_id, "object": "model", "owned_by": owner})
+        all_models.append(
+            {
+                "id": model_id,
+                "displayName": model_id,
+                "description": f"{model_id} model",
+                "owned_by": owner,
+                "supportedGenerationMethods": ["generateContent", "countTokens"],
+            }
+        )
 
     seen: set[str] = set()
     deduped_models: list[dict] = []
@@ -298,5 +337,142 @@ async def models(request: Request):
             deduped_models.append(m)
 
     duration_ms = int((time.perf_counter() - start_t) * 1000)
-    logger.info(f"[Models] list | {len(deduped_models)} models returned ({duration_ms}ms)")
-    return {"object": "list", "data": deduped_models}
+    logger.info(f"[Models] catalog | {len(deduped_models)} models fetched ({duration_ms}ms)")
+    return deduped_models
+
+
+def _is_gemini_format_request(request: Request) -> bool:
+    """Determine whether the request expects Gemini format vs OpenAI format."""
+    path = request.url.path
+    if path.startswith(("/v1beta", "/v1beta1")):
+        return True
+    fmt = request.query_params.get("format", "").lower()
+    if fmt == "gemini":
+        return True
+    if fmt == "openai":
+        return False
+    if request.headers.get("x-goog-api-key"):
+        return True
+    if "key" in request.query_params and not request.headers.get("authorization"):
+        return True
+    if "x-goog-api-client" in request.headers:
+        return True
+    return path == "/models" or (path.startswith("/models/") and not path.startswith("/v1/"))
+
+
+def _format_openai_models(models: list[dict]) -> dict:
+    return {
+        "object": "list",
+        "data": [
+            {
+                "id": m["id"],
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": m.get("owned_by", "google"),
+            }
+            for m in models
+        ],
+    }
+
+
+def _format_gemini_models(models: list[dict]) -> dict:
+    gemini_list = []
+    for m in models:
+        model_id = m["id"]
+        name = f"models/{model_id}" if not model_id.startswith("models/") else model_id
+        entry = {
+            "name": name,
+            "version": m.get("version", "001"),
+            "displayName": m.get("displayName") or model_id,
+            "description": m.get("description") or f"{model_id} model",
+            "supportedGenerationMethods": m.get(
+                "supportedGenerationMethods", ["generateContent", "countTokens"]
+            ),
+        }
+        for field in ("inputTokenLimit", "outputTokenLimit", "temperature", "topP", "topK"):
+            if m.get(field) is not None:
+                entry[field] = m[field]
+        gemini_list.append(entry)
+    return {"models": gemini_list}
+
+
+def _format_openai_single_model(m: dict) -> dict:
+    return {
+        "id": m["id"],
+        "object": "model",
+        "created": 1700000000,
+        "owned_by": m.get("owned_by", "google"),
+    }
+
+
+def _format_gemini_single_model(m: dict) -> dict:
+    model_id = m["id"]
+    name = f"models/{model_id}" if not model_id.startswith("models/") else model_id
+    entry = {
+        "name": name,
+        "version": m.get("version", "001"),
+        "displayName": m.get("displayName") or model_id,
+        "description": m.get("description") or f"{model_id} model",
+        "supportedGenerationMethods": m.get(
+            "supportedGenerationMethods", ["generateContent", "countTokens"]
+        ),
+    }
+    for field in ("inputTokenLimit", "outputTokenLimit", "temperature", "topP", "topK"):
+        if m.get(field) is not None:
+            entry[field] = m[field]
+    return entry
+
+
+# --- Model listing routes ---
+
+
+@router.api_route("/models", methods=["GET"])
+async def models(request: Request):
+    models_list = await get_model_catalog()
+    if _is_gemini_format_request(request):
+        return _format_gemini_models(models_list)
+    return _format_openai_models(models_list)
+
+
+@router.api_route("/models/{model_path:path}", methods=["GET"])
+async def get_model(model_path: str, request: Request):
+    model_id = _parse_model_path(model_path)
+    models_list = await get_model_catalog()
+    match = next((m for m in models_list if m["id"] == model_id), None)
+    if not match:
+        match = {
+            "id": model_id,
+            "displayName": model_id,
+            "description": f"{model_id} model",
+            "owned_by": "google",
+            "supportedGenerationMethods": ["generateContent", "countTokens"],
+        }
+    if _is_gemini_format_request(request):
+        return _format_gemini_single_model(match)
+    return _format_openai_single_model(match)
+
+
+@gemini_router.api_route("/models", methods=["GET"])
+async def gemini_models(request: Request):
+    models_list = await get_model_catalog()
+    if request.query_params.get("format", "").lower() == "openai":
+        return _format_openai_models(models_list)
+    return _format_gemini_models(models_list)
+
+
+@gemini_router.api_route("/models/{model_path:path}", methods=["GET"])
+async def gemini_get_model(model_path: str, request: Request):
+    model_id = _parse_model_path(model_path)
+    models_list = await get_model_catalog()
+    match = next((m for m in models_list if m["id"] == model_id), None)
+    if not match:
+        match = {
+            "id": model_id,
+            "displayName": model_id,
+            "description": f"{model_id} model",
+            "owned_by": "google",
+            "supportedGenerationMethods": ["generateContent", "countTokens"],
+        }
+    if request.query_params.get("format", "").lower() == "openai":
+        return _format_openai_single_model(match)
+    return _format_gemini_single_model(match)
